@@ -1,0 +1,57 @@
+{{define "title"}}{{.Name}} terminal · VSAT Cluster{{end}}
+{{define "head"}}
+<link rel="stylesheet" href="/static/xterm/xterm.css">
+{{end}}
+{{define "bodyclass"}}body-terminal{{end}}
+{{define "content"}}
+<div class="term-head">
+  <div class="term-id">⌧ <span class="mono">{{.Name}}</span></div>
+  <div class="term-status"><span id="conn-dot" class="dot dot-off"></span><span id="conn-label">connecting…</span></div>
+  <a class="btn btn-ghost btn-small" href="/">⤺ Back</a>
+</div>
+<div id="terminal"></div>
+{{end}}
+{{define "scripts"}}
+<script src="/static/xterm/xterm.js"></script>
+<script src="/static/xterm/addon-fit.js"></script>
+<script>
+  const container = {{.Name}};
+  const term = new Terminal({ cursorBlink: true, fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 14 });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('terminal'));
+  fit.fit();
+
+  const dot = document.getElementById('conn-dot');
+  const label = document.getElementById('conn-label');
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/vsat/${encodeURIComponent(container)}/terminal/ws`);
+  ws.binaryType = 'arraybuffer';
+
+  function sendResize() {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    }
+  }
+
+  ws.onopen = () => {
+    dot.className = 'dot dot-on';
+    label.textContent = 'connected';
+    fit.fit();
+    sendResize();
+    term.focus();
+  };
+  ws.onmessage = (ev) => {
+    const data = typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data);
+    term.write(data);
+  };
+  ws.onclose = () => {
+    dot.className = 'dot dot-off';
+    label.textContent = 'disconnected';
+    term.write('\r\n\x1b[31m[connection closed]\x1b[0m\r\n');
+  };
+
+  term.onData((d) => { if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); });
+  window.addEventListener('resize', () => { fit.fit(); sendResize(); });
+</script>
+{{end}}

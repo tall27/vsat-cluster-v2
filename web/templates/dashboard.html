@@ -1,0 +1,45 @@
+{{define "title"}}Dashboard · VSAT Cluster{{end}}
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>VSatellites</h1>
+    <p class="muted">{{.Used}} / {{.Max}} used</p>
+  </div>
+  <div>
+    {{if .CanAdd}}
+    <button class="btn btn-primary" onclick="document.getElementById('add-modal').showModal()">+ Add VSAT</button>
+    {{else}}
+    <button class="btn btn-primary" disabled title="Limit reached">+ Add VSAT</button>
+    {{end}}
+  </div>
+</div>
+
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<section class="card">
+  <div id="container-grid" hx-get="/partials/containers" hx-trigger="every 5s" hx-swap="innerHTML">
+    {{template "containers" .}}
+  </div>
+</section>
+
+<dialog id="add-modal" class="modal">
+  <form method="post" action="/containers" class="stack"
+        onsubmit="document.getElementById('add-modal').close()">
+    <h2>Add a VSatellite</h2>
+    <label class="field">
+      <span>Name</span>
+      <input type="text" name="name" value="{{.SuggestedName}}" required
+             pattern="{{.Prefix}}-[a-z0-9-]+" autocomplete="off">
+      <small class="muted">must start with <code>{{.Prefix}}-</code></small>
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-modal').close()">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{define "scripts"}}
+<script src="/static/js/htmx.min.js"></script>
+{{end}}

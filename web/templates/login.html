@@ -1,0 +1,16 @@
+{{define "title"}}Sign in · VSAT Cluster{{end}}
+{{define "content"}}
+<section class="card auth-card">
+  <h1 class="auth-title">VSAT Cluster v2</h1>
+  <p class="auth-sub">LXD container manager</p>
+  {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+  <form method="post" action="/login" class="stack">
+    <label class="field">
+      <span>Password</span>
+      <input type="password" name="password" autofocus required autocomplete="current-password">
+    </label>
+    <button class="btn btn-primary" type="submit">Unlock</button>
+  </form>
+  <p class="auth-foot">🔒 served over HTTPS</p>
+</section>
+{{end}}

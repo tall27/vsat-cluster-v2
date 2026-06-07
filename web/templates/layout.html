@@ -1,0 +1,29 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}VSAT Cluster{{end}}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  {{block "head" .}}{{end}}
+</head>
+<body class="{{block "bodyclass" .}}{{end}}">
+  {{block "chrome" .}}
+  <header class="topbar">
+    <div class="brand">VSAT&nbsp;Cluster <span class="brand-sub">v2</span></div>
+    <nav class="topnav">
+      {{if .ShowNav}}
+        <span class="host">host&nbsp;{{.Host}}</span>
+        <form method="post" action="/logout" class="inline">
+          <button class="btn btn-ghost" type="submit">Logout</button>
+        </form>
+      {{end}}
+    </nav>
+  </header>
+  {{end}}
+  <main class="content">
+    {{block "content" .}}{{end}}
+  </main>
+  {{block "scripts" .}}{{end}}
+</body>
+</html>{{end}}

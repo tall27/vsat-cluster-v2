@@ -1,0 +1,20 @@
+{{define "title"}}First-run setup · VSAT Cluster{{end}}
+{{define "content"}}
+<section class="card auth-card">
+  <h1 class="auth-title">Welcome</h1>
+  <p class="auth-sub">Set the admin password to finish setup.</p>
+  {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+  <form method="post" action="/setup" class="stack">
+    <label class="field">
+      <span>Admin password</span>
+      <input type="password" name="password" autofocus required minlength="8" autocomplete="new-password">
+    </label>
+    <label class="field">
+      <span>Confirm password</span>
+      <input type="password" name="confirm" required minlength="8" autocomplete="new-password">
+    </label>
+    <button class="btn btn-primary" type="submit">Save &amp; continue</button>
+  </form>
+  <p class="auth-foot">This password protects the dashboard and all container terminals.</p>
+</section>
+{{end}}

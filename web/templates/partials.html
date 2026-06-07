@@ -1,0 +1,29 @@
+{{define "containers"}}
+<table class="grid">
+  <thead>
+    <tr><th>Name</th><th>Status</th><th>Internal IP</th><th class="actions-col">Actions</th></tr>
+  </thead>
+  <tbody>
+    {{range .Containers}}
+    <tr>
+      <td class="mono">{{.Name}}</td>
+      <td>
+        <span class="dot {{if eq .Status "Running"}}dot-on{{else}}dot-off{{end}}"></span>
+        {{.Status}}
+      </td>
+      <td class="mono">{{if .IPv4}}{{.IPv4}}{{else}}&mdash;{{end}}</td>
+      <td class="actions-col">
+        <a class="btn btn-small" href="/vsat/{{.Name}}/terminal">⌧ Terminal</a>
+        <form method="post" action="/containers/{{.Name}}/delete" class="inline"
+              onsubmit="return confirm('Delete {{.Name}}? This destroys the container.');">
+          <button class="btn btn-small btn-danger" type="submit">🗑 Remove</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="4" class="empty">No containers yet. Add one to get started.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="grid-foot">{{.Used}} / {{.Max}} used · auto-refreshing</p>
+{{end}}
