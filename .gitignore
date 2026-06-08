@@ -1,7 +1,7 @@
 # build output
 /out/
-vsat-webapp
-vsat-webapp.exe
+/vsat-webapp
+/vsat-webapp.exe
 
 # local config / secrets
 /cfg/
