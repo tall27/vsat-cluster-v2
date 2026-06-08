@@ -40,6 +40,28 @@ fi
 POOL="$(lxc profile device get default root pool 2>/dev/null || true)"
 [ -z "${POOL}" ] && POOL="$(lxc storage list --format csv -c n | head -n1)"
 
+# --- COW storage pool for VSAT containers ---------------------------------
+# `lxd init --auto` defaults to the `dir` driver when there's no spare block
+# device — the common case on a stock cloud instance with a single root disk.
+# `dir` does a full filesystem copy on every `lxc launch`, slow enough that a
+# freshly launched container can miss the /dev/kmsg-fix retry window when
+# containers are created back-to-back (see docs/test-report.md). A loop-file
+# backed btrfs pool gives near-instant copy-on-write clones with no dedicated
+# block device required — confirmed live: exec-ready in ~1s vs. blowing a 12s
+# budget on `dir`, even with 3 containers launched concurrently.
+COW_POOL="cow"
+COW_SIZE_GB=20
+if ! lxc storage show "${COW_POOL}" >/dev/null 2>&1; then
+  AVAIL_GB="$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')"
+  if [ "${AVAIL_GB:-0}" -ge $((COW_SIZE_GB + 5)) ]; then
+    log "creating ${COW_SIZE_GB}GB loop-file btrfs pool '${COW_POOL}' for fast copy-on-write container launches"
+    lxc storage create "${COW_POOL}" btrfs size="${COW_SIZE_GB}GB"
+  else
+    log "skipping COW pool: only ${AVAIL_GB:-?}GB free on / (need $((COW_SIZE_GB + 5))GB+) — containers will use the slower '${POOL}' pool"
+  fi
+fi
+lxc storage show "${COW_POOL}" >/dev/null 2>&1 && POOL="${COW_POOL}"
+
 # --- vsat-nested profile --------------------------------------------------
 if ! lxc profile show vsat-nested >/dev/null 2>&1; then
   log "creating vsat-nested profile"
