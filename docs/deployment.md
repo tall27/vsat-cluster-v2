@@ -2,6 +2,23 @@
 
 The app runs on the Linux host it manages. Target: Ubuntu 24.04/26.04 with LXD.
 
+## Quick start (recommended)
+
+On a fresh host, as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/main/scripts/quickstart.sh | sudo bash
+```
+
+This downloads the latest [GitHub release](https://github.com/tall27/vsat-cluster-v2/releases)
+binary, runs `bootstrap-host.sh` (LXD, `vsat-nested` profile, NAT) and `install.sh`
+(binary + systemd unit) in one shot, and prints the URL to finish setup at. It's
+idempotent — re-run it to pick up a newer release. To pin the SNAT source IP, pass
+it through: `... | sudo bash -s -- 10.0.2.115`.
+
+The sections below describe what `quickstart.sh` does step by step — useful if you
+want to run the steps individually, build from source, or debug a failure.
+
 ## 1. Build a release binary
 
 On any machine with Go 1.24+:
