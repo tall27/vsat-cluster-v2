@@ -7,7 +7,7 @@ The app runs on the Linux host it manages. Target: Ubuntu 24.04/26.04 with LXD.
 On a fresh host, as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/main/scripts/quickstart.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo bash
 ```
 
 This downloads the latest [GitHub release](https://github.com/tall27/vsat-cluster-v2/releases)

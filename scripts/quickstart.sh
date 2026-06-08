@@ -5,7 +5,7 @@
 # (LXD, vsat-nested profile, NAT) and installs the systemd service. Idempotent:
 # safe to re-run (e.g. to pick up a newer release).
 #
-# Usage:   curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/main/scripts/quickstart.sh | sudo bash
+# Usage:   curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo bash
 #      or: sudo ./quickstart.sh [PRIMARY_IP]
 set -euo pipefail
 
