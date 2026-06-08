@@ -6,6 +6,9 @@
     <p class="muted">{{.Used}} / {{.Max}} used</p>
   </div>
   <div>
+    <a class="btn btn-ghost" href="/monitoring">
+      {{template "icon-monitor" .}} Monitor
+    </a>
     {{if .CanAdd}}
     <button class="btn btn-primary" onclick="document.getElementById('add-modal').showModal()">+ Add VSAT</button>
     {{else}}

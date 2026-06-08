@@ -1,26 +1,22 @@
-// Package metrics polls LXD's built-in Prometheus-format metrics endpoint
-// (`lxc query /1.0/metrics`) and keeps a small in-memory rolling history of
-// per-container CPU, memory and network rates for the dashboard's monitoring
-// charts. No extra daemons or third-party agents — purely the LXD API LXD
-// already exposes.
+// Package metrics collects host and container utilization snapshots from LXD and
+// Linux /proc files. The UI renders this data as a live table, not charts.
 package metrics
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// CommandRunner executes an lxc command and returns its combined output.
-// Mirrors internal/lxdctl.CommandRunner so the same shell-out pattern (and
-// test-mocking style) is used throughout the app.
+// CommandRunner executes an lxc command and returns combined output.
 type CommandRunner interface {
 	Run(ctx context.Context, args ...string) ([]byte, error)
 }
@@ -31,113 +27,108 @@ type Options struct {
 	Bin string
 	// Sudo runs lxc via `sudo -n`.
 	Sudo bool
-	// Interval between polls (default 10s).
+	// Interval between polls (default 5s).
 	Interval time.Duration
-	// Window caps how many samples each series retains (default 360 — at a
-	// 10s interval that's an hour of history, a few KB per container).
-	Window int
 	// Runner overrides command execution (used in tests).
 	Runner CommandRunner
+	// ReadFile overrides /proc reads (used in tests).
+	ReadFile func(name string) ([]byte, error)
+	// ListFn returns container rows and status (used for visibility of stopped
+	// containers.
+	ListFn func(ctx context.Context) ([]ContainerInfo, error)
+	// Throughput ceilings in bytes/s for utilization percentages.
+	DiskThroughputCapBytes    float64
+	NetworkThroughputCapBytes float64
 }
 
-// Point is one timestamped sample, JSON-friendly for the chart endpoint.
-type Point struct {
-	At    time.Time `json:"at"`
-	Value float64   `json:"value"`
+// ContainerInfo carries container metadata for visibility.
+type ContainerInfo struct {
+	Name   string
+	Status string
 }
 
-// Snapshot is the JSON view of one container's tracked series, mirroring the
-// CPU/network panels of a typical cloud-provider monitoring tab.
-type Snapshot struct {
-	CPUPercent         []Point `json:"cpuPercent"`
-	MemoryPercent      []Point `json:"memoryPercent"`
-	NetRxBytesPerSec   []Point `json:"netRxBytesPerSec"`
-	NetTxBytesPerSec   []Point `json:"netTxBytesPerSec"`
-	NetRxPacketsPerSec []Point `json:"netRxPacketsPerSec"`
-	NetTxPacketsPerSec []Point `json:"netTxPacketsPerSec"`
+// UtilizationRow is one monitoring table row.
+type UtilizationRow struct {
+	Name                 string   `json:"name"`
+	Type                 string   `json:"type"`
+	Status               string   `json:"status"`
+	CPUUtilization       *float64 `json:"cpuUtilization"`
+	MemoryUtilization    *float64 `json:"memoryUtilization"`
+	MemoryTotalBytes     *uint64  `json:"memoryTotalBytes"`
+	MemoryFreeBytes      *uint64  `json:"memoryFreeBytes"`
+	IOUtilization        *float64 `json:"ioUtilization"`
+	IOReadBytesPerSec    *float64 `json:"ioReadBytesPerSec"`
+	IOWriteBytesPerSec   *float64 `json:"ioWriteBytesPerSec"`
+	NetworkUtilization   *float64 `json:"networkUtilization"`
+	NetworkRxBytesPerSec *float64 `json:"networkRxBytesPerSec"`
+	NetworkTxBytesPerSec *float64 `json:"networkTxBytesPerSec"`
 }
 
-// series is a fixed-size ring buffer of samples for one chart line.
-type series struct {
-	mu     sync.Mutex
-	points []Point
-	max    int
+// MonitoringSnapshot is the JSON payload served by /monitoring/data.
+type MonitoringSnapshot struct {
+	Ready bool             `json:"ready"`
+	Rows  []UtilizationRow `json:"rows"`
 }
 
-func newSeries(max int) *series { return &series{max: max} }
+const (
+	defaultHostName          = "host"
+	defaultHostType          = "Host"
+	defaultContainerType     = "Container"
+	defaultThroughputCeiling = 100 * 1024 * 1024 // 100 MiB/s
+)
 
-func (s *series) add(at time.Time, v float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.points = append(s.points, Point{At: at, Value: v})
-	if len(s.points) > s.max {
-		s.points = s.points[len(s.points)-s.max:]
-	}
+type rawContainerSample struct {
+	at             time.Time
+	cpuSeconds     float64
+	cpuCount       float64
+	memTotal       float64
+	memAvailable   float64
+	diskReadBytes  float64
+	diskWriteBytes float64
+	netRxBytes     float64
+	netTxBytes     float64
 }
 
-func (s *series) snapshot() []Point {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]Point, len(s.points))
-	copy(out, s.points)
-	return out
+type rawHostSample struct {
+	at        time.Time
+	cpuTotal  float64
+	cpuIdle   float64
+	memTotal  float64
+	memAvail  float64
+	diskRead  float64
+	diskWrite float64
+	netRx     float64
+	netTx     float64
 }
 
-// tracked is the set of derived series kept for one container.
-type tracked struct {
-	cpuPercent    *series
-	memoryPercent *series
-	netRxBytes    *series
-	netTxBytes    *series
-	netRxPackets  *series
-	netTxPackets  *series
-}
-
-func newTracked(window int) *tracked {
-	return &tracked{
-		cpuPercent:    newSeries(window),
-		memoryPercent: newSeries(window),
-		netRxBytes:    newSeries(window),
-		netTxBytes:    newSeries(window),
-		netRxPackets:  newSeries(window),
-		netTxPackets:  newSeries(window),
-	}
-}
-
-// rawSample is one poll's cumulative counters/gauges for a container, parsed
-// straight from the Prometheus text. Rates are derived from the delta between
-// consecutive samples.
-type rawSample struct {
-	at           time.Time
-	cpuSeconds   float64
-	cpuCount     float64
-	memTotal     float64
-	memAvailable float64
-	netRxBytes   float64
-	netTxBytes   float64
-	netRxPackets float64
-	netTxPackets float64
-}
-
-// Collector periodically polls LXD's metrics endpoint and keeps a rolling
-// history of derived per-container rates.
+// Collector polls host and container metrics and computes latest utilization.
 type Collector struct {
 	runner   CommandRunner
+	readFile func(name string) ([]byte, error)
+	listFn   func(context.Context) ([]ContainerInfo, error)
 	interval time.Duration
-	window   int
+	diskCap  float64
+	netCap   float64
 
-	mu   sync.RWMutex
-	data map[string]*tracked
-	prev map[string]rawSample
+	mu        sync.RWMutex
+	container map[string]rawContainerSample
+	hostPrev  rawHostSample
+	hasHost   bool
+	rows      map[string]UtilizationRow
 }
 
-// NewCollector builds a Collector from Options, applying sensible defaults.
+// NewCollector builds a Collector from Options, applying defaults.
 func NewCollector(opts Options) *Collector {
 	if opts.Interval <= 0 {
-		opts.Interval = 10 * time.Second
+		opts.Interval = 5 * time.Second
 	}
-	if opts.Window <= 0 {
-		opts.Window = 360
+	diskCap := opts.DiskThroughputCapBytes
+	if diskCap <= 0 {
+		diskCap = defaultThroughputCeiling
+	}
+	netCap := opts.NetworkThroughputCapBytes
+	if netCap <= 0 {
+		netCap = defaultThroughputCeiling
 	}
 	runner := opts.Runner
 	if runner == nil {
@@ -147,18 +138,27 @@ func NewCollector(opts Options) *Collector {
 		}
 		runner = &cliRunner{bin: bin, sudo: opts.Sudo}
 	}
+	readFile := opts.ReadFile
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
 	return &Collector{
-		runner:   runner,
-		interval: opts.Interval,
-		window:   opts.Window,
-		data:     make(map[string]*tracked),
-		prev:     make(map[string]rawSample),
+		runner:    runner,
+		readFile:  readFile,
+		listFn:    opts.ListFn,
+		interval:  opts.Interval,
+		diskCap:   diskCap,
+		netCap:    netCap,
+		container: make(map[string]rawContainerSample),
+		rows:      make(map[string]UtilizationRow),
 	}
 }
 
-// Run polls on Interval until ctx is cancelled. Intended to run in its own
-// goroutine for the lifetime of the server.
+// Run polls until ctx is cancelled.
 func (c *Collector) Run(ctx context.Context) {
+	if c == nil {
+		return
+	}
 	c.poll(ctx)
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -173,76 +173,438 @@ func (c *Collector) Run(ctx context.Context) {
 }
 
 func (c *Collector) poll(ctx context.Context) {
-	out, err := c.runner.Run(ctx, "query", "/1.0/metrics")
+	if c == nil {
+		return
+	}
+	containers, err := c.containers(ctx)
 	if err != nil {
-		return // transient — try again next tick
+		return // keep previous rows rather than dropping visibility
 	}
+
 	now := time.Now()
-	for name, cur := range parseMetrics(out) {
-		cur.at = now
-		c.record(name, cur)
+
+	nextRows := map[string]UtilizationRow{
+		defaultHostName: {
+			Name:   defaultHostName,
+			Type:   defaultHostType,
+			Status: "Running",
+		},
 	}
+
+	host, err := c.sampleHost()
+	if err == nil && !isZeroHostSample(host) {
+		prev := c.hostPrev
+		c.hostPrev = host
+		c.hostPrev.at = now
+		row := nextRows[defaultHostName]
+		if c.hasHost {
+			c.computeHostUsage(&row, prev, host, now.Sub(prev.at).Seconds())
+			nextRows[defaultHostName] = row
+		} else {
+			c.hasHost = true
+		}
+	}
+
+	samples, err := c.sampleContainers(ctx)
+	if err != nil {
+		samples = make(map[string]rawContainerSample)
+	}
+	nextContainerSamples := make(map[string]rawContainerSample, len(containers))
+	for _, container := range containers {
+		row := UtilizationRow{
+			Name:   container.Name,
+			Type:   defaultContainerType,
+			Status: container.Status,
+		}
+		raw, ok := samples[container.Name]
+		if ok {
+			raw.at = now
+			prev, hadPrev := c.container[container.Name]
+			if hadPrev && strings.EqualFold(container.Status, "Running") {
+				c.computeContainerUsage(&row, prev, raw, now.Sub(prev.at).Seconds())
+			}
+			nextContainerSamples[container.Name] = raw
+		}
+		nextRows[container.Name] = row
+	}
+
+	c.mu.Lock()
+	c.rows = nextRows
+	c.container = nextContainerSamples
+	c.mu.Unlock()
 }
 
-func (c *Collector) record(name string, cur rawSample) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	prev, hadPrev := c.prev[name]
-	c.prev[name] = cur
-	if !hadPrev {
-		return // need two samples to derive a rate
+func (c *Collector) containers(ctx context.Context) ([]ContainerInfo, error) {
+	if c.listFn == nil {
+		return nil, nil
 	}
-	dt := cur.at.Sub(prev.at).Seconds()
+	return c.listFn(ctx)
+}
+
+func (c *Collector) sampleHost() (rawHostSample, error) {
+	now := time.Now()
+	var out rawHostSample
+	out.at = now
+
+	rawStat, err := c.readFile("/proc/stat")
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	total, idle, err := parseProcStat(rawStat)
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	out.cpuTotal = total
+	out.cpuIdle = idle
+
+	rawMem, err := c.readFile("/proc/meminfo")
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	memTotal, memAvail, err := parseProcMeminfo(rawMem)
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	out.memTotal = memTotal
+	out.memAvail = memAvail
+
+	rawDisk, err := c.readFile("/proc/diskstats")
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	read, write, err := parseProcDiskstats(rawDisk)
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	out.diskRead = read
+	out.diskWrite = write
+
+	rawNet, err := c.readFile("/proc/net/dev")
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	rx, tx, err := parseProcNetDev(rawNet)
+	if err != nil {
+		return rawHostSample{}, err
+	}
+	out.netRx = rx
+	out.netTx = tx
+
+	return out, nil
+}
+
+func (c *Collector) sampleContainers(ctx context.Context) (map[string]rawContainerSample, error) {
+	out, err := c.runner.Run(ctx, "query", "/1.0/metrics")
+	if err != nil {
+		return map[string]rawContainerSample{}, err
+	}
+	return parseMetrics(out), nil
+}
+
+func (c *Collector) computeHostUsage(row *UtilizationRow, prev, cur rawHostSample, dt float64) {
 	if dt <= 0 {
 		return
 	}
-
-	t, ok := c.data[name]
-	if !ok {
-		t = newTracked(c.window)
-		c.data[name] = t
-	}
-	if cur.cpuCount > 0 {
-		t.cpuPercent.add(cur.at, clampPercent(rate(cur.cpuSeconds, prev.cpuSeconds, dt)/cur.cpuCount*100))
-	}
+	row.CPUUtilization = rateToPercent(cur.cpuTotal-prev.cpuTotal, cur.cpuIdle-prev.cpuIdle, dt)
 	if cur.memTotal > 0 {
-		used := cur.memTotal - cur.memAvailable
-		t.memoryPercent.add(cur.at, clampPercent(used/cur.memTotal*100))
+		row.MemoryUtilization = floatPtr(clampPercent((cur.memTotal - cur.memAvail) / cur.memTotal * 100))
+		total := uint64(cur.memTotal)
+		free := uint64(cur.memAvail)
+		row.MemoryTotalBytes = &total
+		row.MemoryFreeBytes = &free
 	}
-	t.netRxBytes.add(cur.at, rate(cur.netRxBytes, prev.netRxBytes, dt))
-	t.netTxBytes.add(cur.at, rate(cur.netTxBytes, prev.netTxBytes, dt))
-	t.netRxPackets.add(cur.at, rate(cur.netRxPackets, prev.netRxPackets, dt))
-	t.netTxPackets.add(cur.at, rate(cur.netTxPackets, prev.netTxPackets, dt))
+	row.IOReadBytesPerSec = floatPtr(rate(cur.diskRead, prev.diskRead, dt))
+	row.IOWriteBytesPerSec = floatPtr(rate(cur.diskWrite, prev.diskWrite, dt))
+	row.IOUtilization = floatPtr(throughputToPercent(rate(cur.diskRead, prev.diskRead, dt)+rate(cur.diskWrite, prev.diskWrite, dt), c.diskCap))
+	row.NetworkRxBytesPerSec = floatPtr(rate(cur.netRx, prev.netRx, dt))
+	row.NetworkTxBytesPerSec = floatPtr(rate(cur.netTx, prev.netTx, dt))
+	row.NetworkUtilization = floatPtr(throughputToPercent(rate(cur.netRx, prev.netRx, dt)+rate(cur.netTx, prev.netTx, dt), c.netCap))
 }
 
-// Snapshot returns the current series for name, or false if nothing has been
-// collected for it yet (e.g. it was created less than two poll intervals ago).
-func (c *Collector) Snapshot(name string) (Snapshot, bool) {
+func (c *Collector) computeContainerUsage(row *UtilizationRow, prev, cur rawContainerSample, dt float64) {
+	if dt <= 0 || cur.cpuCount <= 0 || cur.memTotal <= 0 {
+		return
+	}
+	row.CPUUtilization = floatPtr(clampPercent(rate(cur.cpuSeconds, prev.cpuSeconds, dt) / cur.cpuCount * 100))
+	row.MemoryUtilization = floatPtr(clampPercent((cur.memTotal - cur.memAvailable) / cur.memTotal * 100))
+	row.MemoryTotalBytes = uintPtr(uint64(cur.memTotal))
+	row.MemoryFreeBytes = uintPtr(uint64(cur.memAvailable))
+	rxRate := rate(cur.netRxBytes, prev.netRxBytes, dt)
+	txRate := rate(cur.netTxBytes, prev.netTxBytes, dt)
+	row.NetworkRxBytesPerSec = floatPtr(rxRate)
+	row.NetworkTxBytesPerSec = floatPtr(txRate)
+	row.NetworkUtilization = floatPtr(throughputToPercent(rxRate+txRate, c.netCap))
+	readRate := rate(cur.diskReadBytes, prev.diskReadBytes, dt)
+	writeRate := rate(cur.diskWriteBytes, prev.diskWriteBytes, dt)
+	row.IOReadBytesPerSec = floatPtr(readRate)
+	row.IOWriteBytesPerSec = floatPtr(writeRate)
+	row.IOUtilization = floatPtr(throughputToPercent(readRate+writeRate, c.diskCap))
+}
+
+// Snapshot returns the current row set, sorted by host then container names.
+func (c *Collector) Snapshot() MonitoringSnapshot {
 	c.mu.RLock()
-	t, ok := c.data[name]
-	c.mu.RUnlock()
-	if !ok {
-		return Snapshot{}, false
+	defer c.mu.RUnlock()
+
+	rows := make([]UtilizationRow, 0, len(c.rows))
+	ready := false
+	if host, ok := c.rows[defaultHostName]; ok {
+		rows = append(rows, host)
+		ready = rowReady(host)
 	}
-	return Snapshot{
-		CPUPercent:         t.cpuPercent.snapshot(),
-		MemoryPercent:      t.memoryPercent.snapshot(),
-		NetRxBytesPerSec:   t.netRxBytes.snapshot(),
-		NetTxBytesPerSec:   t.netTxBytes.snapshot(),
-		NetRxPacketsPerSec: t.netRxPackets.snapshot(),
-		NetTxPacketsPerSec: t.netTxPackets.snapshot(),
-	}, true
+	names := make([]string, 0, len(c.rows))
+	for name := range c.rows {
+		if name != defaultHostName {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		row := c.rows[name]
+		rows = append(rows, row)
+		ready = ready || rowReady(row)
+	}
+	return MonitoringSnapshot{Ready: ready, Rows: rows}
 }
 
-// rate returns the non-negative per-second delta between two cumulative
-// counter readings. Counters reset to zero on container restart, in which
-// case we report 0 for that interval rather than a bogus negative spike.
+func rowReady(row UtilizationRow) bool {
+	return row.CPUUtilization != nil ||
+		row.MemoryUtilization != nil ||
+		row.IOUtilization != nil ||
+		row.NetworkUtilization != nil
+}
+
+// parseMetrics parses the subset of LXD metrics needed by the monitoring table.
+func parseMetrics(data []byte) map[string]rawContainerSample {
+	out := make(map[string]rawContainerSample)
+	sc := bufio.NewScanner(strings.NewReader(string(data)))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		parsed := metricLineRE.FindStringSubmatch(line)
+		if parsed == nil {
+			continue
+		}
+		name := parsed[1]
+		labelText := parsed[2]
+		valText := parsed[3]
+
+		labels := parseLabels(labelText)
+		if labels["type"] != "container" {
+			continue
+		}
+		containerName := labels["name"]
+		if containerName == "" {
+			continue
+		}
+
+		v, err := strconv.ParseFloat(valText, 64)
+		if err != nil {
+			continue
+		}
+		sample := out[containerName]
+		switch name {
+		case "lxd_cpu_seconds_total":
+			sample.cpuSeconds += v
+		case "lxd_cpu_effective_total":
+			sample.cpuCount = v
+		case "lxd_memory_MemTotal_bytes":
+			sample.memTotal = v
+		case "lxd_memory_MemAvailable_bytes":
+			sample.memAvailable = v
+		case "lxd_network_receive_bytes_total":
+			if !isLoopbackDevice(labels["device"]) {
+				sample.netRxBytes += v
+			}
+		case "lxd_network_transmit_bytes_total":
+			if !isLoopbackDevice(labels["device"]) {
+				sample.netTxBytes += v
+			}
+		case "lxd_disk_read_bytes_total":
+			sample.diskReadBytes += v
+		case "lxd_disk_write_bytes_total", "lxd_disk_written_bytes_total":
+			sample.diskWriteBytes += v
+		}
+		out[containerName] = sample
+	}
+	return out
+}
+
+func parseLabels(s string) map[string]string {
+	labels := make(map[string]string, 4)
+	for _, m := range labelRE.FindAllStringSubmatch(s, -1) {
+		labels[m[1]] = m[2]
+	}
+	return labels
+}
+
+func parseProcStat(raw []byte) (total float64, idle float64, err error) {
+	var line string
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	if sc.Scan() {
+		line = sc.Text()
+	} else {
+		return 0, 0, fmt.Errorf("proc/stat: missing data")
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 6 || fields[0] != "cpu" {
+		return 0, 0, fmt.Errorf("proc/stat: malformed cpu line")
+	}
+	for i := 1; i < len(fields); i++ {
+		v, e := strconv.ParseFloat(fields[i], 64)
+		if e != nil {
+			return 0, 0, fmt.Errorf("proc/stat: parse field: %w", e)
+		}
+		total += v
+		if i == 4 || i == 5 { // idle + iowait
+			idle += v
+		}
+	}
+	return total, idle, nil
+}
+
+func parseProcMeminfo(raw []byte) (total float64, available float64, err error) {
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	var (
+		gotTotal     bool
+		usedFallback bool
+	)
+	for sc.Scan() {
+		line := sc.Text()
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		switch parts[0] {
+		case "MemTotal:":
+			total, err = parseKib(parts[1:])
+			if err != nil {
+				return 0, 0, err
+			}
+			gotTotal = true
+		case "MemAvailable:":
+			available, err = parseKib(parts[1:])
+			if err != nil {
+				return 0, 0, err
+			}
+			usedFallback = true
+		case "MemFree:":
+			// Fallback if MemAvailable is not exposed.
+			if !usedFallback {
+				available, err = parseKib(parts[1:])
+				if err != nil {
+					return 0, 0, err
+				}
+			}
+		}
+	}
+	if !gotTotal || available <= 0 {
+		return 0, 0, fmt.Errorf("proc/meminfo: incomplete data")
+	}
+	return total, available, nil
+}
+
+func parseKib(parts []string) (float64, error) {
+	if len(parts) == 0 {
+		return 0, fmt.Errorf("empty value")
+	}
+	v, err := strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return 0, err
+	}
+	return v * 1024, nil
+}
+
+func parseProcDiskstats(raw []byte) (readBytes float64, writeBytes float64, err error) {
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 14 {
+			continue
+		}
+		device := fields[2]
+		if isIgnoredBlockDevice(device) {
+			continue
+		}
+		readSectors, e := strconv.ParseFloat(fields[5], 64)
+		if e != nil {
+			return 0, 0, fmt.Errorf("proc/diskstats read sectors: %w", e)
+		}
+		writeSectors, e := strconv.ParseFloat(fields[9], 64)
+		if e != nil {
+			return 0, 0, fmt.Errorf("proc/diskstats write sectors: %w", e)
+		}
+		readBytes += readSectors * 512
+		writeBytes += writeSectors * 512
+	}
+	if err := sc.Err(); err != nil {
+		return 0, 0, err
+	}
+	return readBytes, writeBytes, nil
+}
+
+func parseProcNetDev(raw []byte) (rxBytes float64, txBytes float64, err error) {
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	// header has 2 lines.
+	for i := 0; i < 2 && sc.Scan(); i++ {
+	}
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		device := strings.TrimSpace(parts[0])
+		if device == "lo" {
+			continue
+		}
+		stats := strings.Fields(parts[1])
+		if len(stats) < 16 {
+			continue
+		}
+		rx, e := strconv.ParseFloat(stats[0], 64)
+		if e != nil {
+			return 0, 0, fmt.Errorf("proc/net/dev rx: %w", e)
+		}
+		tx, e := strconv.ParseFloat(stats[8], 64)
+		if e != nil {
+			return 0, 0, fmt.Errorf("proc/net/dev tx: %w", e)
+		}
+		rxBytes += rx
+		txBytes += tx
+	}
+	return rxBytes, txBytes, nil
+}
+
+func rateToPercent(delta float64, idledelta float64, dt float64) *float64 {
+	if dt <= 0 || delta <= 0 {
+		return nil
+	}
+	return floatPtr(clampPercent((delta - idledelta) / delta * 100))
+}
+
 func rate(cur, prev, dt float64) float64 {
 	if dt <= 0 || cur < prev {
 		return 0
 	}
 	return (cur - prev) / dt
+}
+
+func throughputToPercent(v float64, capBytes float64) float64 {
+	if capBytes <= 0 {
+		return 0
+	}
+	return clampPercent(v / capBytes * 100)
 }
 
 func clampPercent(v float64) float64 {
@@ -256,86 +618,41 @@ func clampPercent(v float64) float64 {
 	}
 }
 
-// metricLineRE matches Prometheus exposition lines: `name{labels} value`.
-var metricLineRE = regexp.MustCompile(`^(lxd_[a-zA-Z_]+)\{([^}]*)\}\s+([0-9eE.+-]+)\s*$`)
+// UtilizationClass maps utilization to alerting classes.
+func UtilizationClass(v float64) string {
+	switch {
+	case v >= 80:
+		return "critical"
+	case v >= 70:
+		return "warning"
+	default:
+		return "normal"
+	}
+}
 
-// labelRE matches individual `key="value"` label pairs.
+func isZeroHostSample(s rawHostSample) bool {
+	return s.cpuTotal == 0 && s.cpuIdle == 0 && s.memTotal == 0 && s.memAvail == 0 && s.diskRead == 0 && s.diskWrite == 0 && s.netRx == 0 && s.netTx == 0
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
+}
+
+func uintPtr(v uint64) *uint64 {
+	return &v
+}
+
+func isLoopbackDevice(device string) bool {
+	return device == "lo"
+}
+
+func isIgnoredBlockDevice(device string) bool {
+	return strings.HasPrefix(device, "loop") || strings.HasPrefix(device, "ram")
+}
+
+var metricLineRE = regexp.MustCompile(`^(lxd_[a-zA-Z_]+)\{([^}]*)\}\s+([0-9eE.+-]+)\s*$`)
 var labelRE = regexp.MustCompile(`(\w+)="([^"]*)"`)
 
-// parseMetrics extracts the per-container counters/gauges this package tracks
-// from LXD's Prometheus-format /1.0/metrics output. Only `type="container"`
-// series are kept, and network counters are taken from the `eth0` device only
-// (the container's primary NIC) to mirror how a cloud console reports a
-// single instance's network in/out rather than summing every internal veth.
-func parseMetrics(data []byte) map[string]rawSample {
-	out := make(map[string]rawSample)
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "" || line[0] == '#' {
-			continue
-		}
-		m := metricLineRE.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		metric, labelStr, valStr := m[1], m[2], m[3]
-		labels := parseLabels(labelStr)
-		if labels["type"] != "container" {
-			continue
-		}
-		name := labels["name"]
-		if name == "" {
-			continue
-		}
-		val, err := strconv.ParseFloat(valStr, 64)
-		if err != nil {
-			continue
-		}
-		s := out[name]
-		switch metric {
-		case "lxd_cpu_seconds_total":
-			s.cpuSeconds += val
-		case "lxd_cpu_effective_total":
-			s.cpuCount = val
-		case "lxd_memory_MemTotal_bytes":
-			s.memTotal = val
-		case "lxd_memory_MemAvailable_bytes":
-			s.memAvailable = val
-		case "lxd_network_receive_bytes_total":
-			if labels["device"] == "eth0" {
-				s.netRxBytes = val
-			}
-		case "lxd_network_transmit_bytes_total":
-			if labels["device"] == "eth0" {
-				s.netTxBytes = val
-			}
-		case "lxd_network_receive_packets_total":
-			if labels["device"] == "eth0" {
-				s.netRxPackets = val
-			}
-		case "lxd_network_transmit_packets_total":
-			if labels["device"] == "eth0" {
-				s.netTxPackets = val
-			}
-		}
-		out[name] = s
-	}
-	return out
-}
-
-func parseLabels(s string) map[string]string {
-	out := make(map[string]string, 4)
-	for _, m := range labelRE.FindAllStringSubmatch(s, -1) {
-		out[m[1]] = m[2]
-	}
-	return out
-}
-
-// cliRunner is the production CommandRunner using the lxc CLI — identical in
-// shape to internal/lxdctl's execRunner so behavior (sudo handling, error
-// formatting) stays consistent across the app.
 type cliRunner struct {
 	bin  string
 	sudo bool

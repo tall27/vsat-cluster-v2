@@ -1,144 +1,169 @@
-{{define "title"}}{{.Name}} monitoring · VSAT Cluster{{end}}
+{{define "title"}}Monitoring · VSAT Cluster{{end}}
 {{define "content"}}
 <div class="page-head">
   <div>
-    <h1>📊 {{.Name}}</h1>
-    <p class="muted">CPU, memory and network — updated every 10s</p>
+    <h1>Monitoring</h1>
+    <p class="muted">Host and container utilization updated every 5 seconds</p>
   </div>
   <div>
-    <a class="btn btn-ghost" href="/">⤺ Back</a>
+    <a class="btn btn-ghost" href="/">⟵ Back</a>
   </div>
 </div>
 
-<div id="metric-grid" class="metric-grid"></div>
+<div class="card">
+  <table class="monitoring-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Type / status</th>
+        <th>CPU</th>
+        <th>Memory</th>
+        <th>Disk I/O</th>
+        <th>Network</th>
+      </tr>
+    </thead>
+    <tbody id="monitoring-body">
+      <tr>
+        <td colspan="6" class="empty">Loading…</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 {{end}}
 
 {{define "scripts"}}
 <script>
-(() => {
-  const container = {{.Name}};
-  const grid = document.getElementById('metric-grid');
+(function() {
+  const body = document.getElementById('monitoring-body');
+  const refreshMs = 5000;
 
-  // Each entry: [series key in the JSON payload, title, value formatter, line color]
-  const charts = [
-    ['cpuPercent',         'CPU utilization',     v => v.toFixed(1) + ' %',     '#2563eb'],
-    ['memoryPercent',      'Memory utilization',  v => v.toFixed(1) + ' %',     '#7c3aed'],
-    ['netRxBytesPerSec',   'Network in (bytes)',  fmtBytes,                     '#16a34a'],
-    ['netTxBytesPerSec',   'Network out (bytes)', fmtBytes,                     '#dc2626'],
-    ['netRxPacketsPerSec', 'Network in (packets)',v => v.toFixed(1) + ' pkt/s', '#0891b2'],
-    ['netTxPacketsPerSec', 'Network out (packets)',v => v.toFixed(1) + ' pkt/s','#ea580c'],
-  ];
+  const icons = {
+    host: `{{template "icon-host" .}}`,
+    container: `{{template "icon-container" .}}`,
+    cpu: `{{template "icon-cpu" .}}`,
+    memory: `{{template "icon-memory" .}}`,
+    disk: `{{template "icon-disk" .}}`,
+    network: `{{template "icon-network" .}}`,
+  };
 
-  function fmtBytes(v) {
-    if (v >= 1024 * 1024) return (v / (1024 * 1024)).toFixed(2) + ' MiB/s';
-    if (v >= 1024) return (v / 1024).toFixed(1) + ' KiB/s';
-    return v.toFixed(0) + ' B/s';
+  function classFor(value) {
+    if (value >= 80) return 'bar-critical';
+    if (value >= 70) return 'bar-warning';
+    return 'bar-normal';
   }
 
-  const cards = {};
+  function formatPercent(value) {
+    if (value === undefined || value === null) return '--';
+    return `${value.toFixed(1)} %`;
+  }
 
-  function buildCards() {
-    grid.innerHTML = '';
-    for (const [key, title, fmt, color] of charts) {
-      const card = document.createElement('div');
-      card.className = 'metric-card';
-      card.innerHTML = `
-        <div class="metric-head">
-          <span class="metric-title">${title}</span>
-          <span class="metric-value" data-value>—</span>
-        </div>
-        <canvas data-canvas></canvas>`;
-      grid.appendChild(card);
-      cards[key] = {
-        fmt, color,
-        value: card.querySelector('[data-value]'),
-        canvas: card.querySelector('[data-canvas]'),
-      };
+  function formatBytes(value) {
+    if (value === undefined || value === null) return '--';
+    const units = ['B/s', 'KiB/s', 'MiB/s', 'GiB/s'];
+    let v = value;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i += 1;
     }
+    return `${v.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
   }
 
-  function showWaiting(msg) {
-    grid.innerHTML = `<div class="metric-card"><p class="metric-wait">${msg}</p></div>`;
+  function renderRow(row) {
+    return `
+      <tr>
+        <td class="mono">${row.name || '--'}</td>
+        <td>
+          <span class="type-label ${row.type === 'Host' ? 'type-host' : 'type-container'}">
+            ${row.type === 'Host' ? icons.host : icons.container}
+            ${row.type || '--'} ${row.status || ''}
+          </span>
+        </td>
+        <td>${metricCell(row.cpuUtilization, row.type === 'Host' ? ['Host cpu', row.cpuUtilization] : ['CPU', row.cpuUtilization])}</td>
+        <td>${memoryCell(row)}</td>
+        <td>${ioCell(row)}</td>
+        <td>${networkCell(row)}</td>
+      </tr>
+    `;
   }
 
-  function drawSeries(canvas, points, color) {
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth || 260;
-    const h = canvas.clientHeight || 110;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-
-    if (!points || points.length < 2) {
-      ctx.fillStyle = '#9aa3ad';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('collecting data…', 8, h / 2);
-      return;
+  function metricCell(percent, fallback) {
+    if (percent === undefined || percent === null) {
+      return `<div class="metric-mini">--</div>`;
     }
-
-    const values = points.map(p => p.value);
-    const minV = Math.min(0, ...values);
-    const maxV = Math.max(...values, minV + 1e-9);
-    const pad = 6;
-    const xStep = (w - pad * 2) / (points.length - 1);
-
-    ctx.beginPath();
-    points.forEach((p, i) => {
-      const x = pad + i * xStep;
-      const y = h - pad - ((p.value - minV) / (maxV - minV)) * (h - pad * 2);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Fill under the line for a CloudWatch-ish look.
-    ctx.lineTo(pad + (points.length - 1) * xStep, h - pad);
-    ctx.lineTo(pad, h - pad);
-    ctx.closePath();
-    ctx.fillStyle = color + '22';
-    ctx.fill();
+    return `
+      <div class="metric-mini">
+        ${icons.cpu}
+        <span>${fallback && fallback[0] ? fallback[0] : ''}</span>
+      </div>
+      <div class="metric-bar-wrap">
+        <div class="metric-bar ${classFor(percent)}" style="width: ${Math.max(0, Math.min(100, percent))}%;"></div>
+      </div>
+      <div class="metric-val">${formatPercent(percent)}</div>
+    `;
   }
 
-  let gotData = false;
+  function memoryCell(row) {
+    if (row.memoryUtilization === undefined || row.memoryUtilization === null || row.memoryTotalBytes === undefined || row.memoryTotalBytes === null || row.memoryFreeBytes === undefined || row.memoryFreeBytes === null) {
+      return `<div class="metric-mini">${icons.memory}<span>Memory</span></div><div class="metric-mini">--</div>`;
+    }
+    return `
+      <div class="metric-mini">${icons.memory}<span>Memory</span></div>
+      <div class="metric-bar-wrap">
+        <div class="metric-bar ${classFor(row.memoryUtilization)}" style="width: ${Math.max(0, Math.min(100, row.memoryUtilization))}%;"></div>
+      </div>
+      <div class="metric-val">${formatPercent(row.memoryUtilization)}</div>
+      <div class="metric-sub">${formatBytes(row.memoryTotalBytes)} total · ${formatBytes(row.memoryFreeBytes)} free</div>
+    `;
+  }
+
+  function ioCell(row) {
+    const util = row.ioUtilization;
+    const read = formatBytes(row.ioReadBytesPerSec);
+    const write = formatBytes(row.ioWriteBytesPerSec);
+    return `
+      <div class="metric-mini">${icons.disk}<span>Disk I/O</span></div>
+      ${util === undefined || util === null ? '<div class="metric-mini">--</div>' : `
+      <div class="metric-bar-wrap"><div class="metric-bar ${classFor(util)}" style="width: ${Math.max(0, Math.min(100, util))}%;"></div></div>
+      <div class="metric-val">${formatPercent(util)}</div>`}
+      <div class="metric-sub">R: ${read} · W: ${write}</div>
+    `;
+  }
+
+  function networkCell(row) {
+    const util = row.networkUtilization;
+    const rx = formatBytes(row.networkRxBytesPerSec);
+    const tx = formatBytes(row.networkTxBytesPerSec);
+    return `
+      <div class="metric-mini">${icons.network}<span>Network</span></div>
+      ${util === undefined || util === null ? '<div class="metric-mini">--</div>' : `
+      <div class="metric-bar-wrap"><div class="metric-bar ${classFor(util)}" style="width: ${Math.max(0, Math.min(100, util))}%;"></div></div>
+      <div class="metric-val">${formatPercent(util)}</div>`}
+      <div class="metric-sub">Rx: ${rx} · Tx: ${tx}</div>
+    `;
+  }
 
   async function poll() {
-    let res;
+    let response;
     try {
-      res = await fetch(`/vsat/${encodeURIComponent(container)}/monitoring/data`, { cache: 'no-store' });
+      response = await fetch('/monitoring/data', { cache: 'no-store' });
     } catch {
       return;
     }
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data.ready) {
-      if (!gotData) showWaiting('Collecting metrics — charts appear after the first two polls (~20s after the container starts).');
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    const rows = (payload && payload.rows) ? payload.rows : [];
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">No rows yet.</td></tr>';
       return;
     }
-    if (!gotData) {
-      buildCards();
-      gotData = true;
-    }
-    for (const [key] of charts) {
-      const c = cards[key];
-      const points = data[key] || [];
-      drawSeries(c.canvas, points, c.color);
-      if (points.length) c.value.textContent = c.fmt(points[points.length - 1].value);
-    }
+
+    body.innerHTML = rows.map(renderRow).join('');
   }
 
-  showWaiting('Loading…');
   poll();
-  setInterval(poll, 10000);
-  window.addEventListener('resize', () => {
-    for (const [key] of charts) {
-      const c = cards[key];
-      if (c && c.canvas) drawSeries(c.canvas, null, c.color);
-    }
-    poll();
-  });
+  setInterval(poll, refreshMs);
 })();
 </script>
 {{end}}

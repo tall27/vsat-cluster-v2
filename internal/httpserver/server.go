@@ -30,6 +30,7 @@ type Options struct {
 	Host          string // display label, e.g. the public IP/DNS
 	SecureCookies bool
 	Logger        *log.Logger
+	Metrics       *metrics.Collector
 }
 
 // Server holds runtime state and handlers.
@@ -88,7 +89,16 @@ func New(opts Options) (*Server, error) {
 	// CPU/memory/network counters in Prometheus format — poll it locally
 	// rather than standing up Netdata/Prometheus/Grafana ("pure vendor
 	// functionality first"). Negligible overhead: ~0.2-0.3s and ~65KB per poll.
-	s.metrics = metrics.NewCollector(metrics.Options{Bin: lxcBin, Sudo: opts.Sudo})
+	if opts.Metrics != nil {
+		s.metrics = opts.Metrics
+	} else {
+		s.metrics = metrics.NewCollector(metrics.Options{
+			Bin:      lxcBin,
+			Sudo:     opts.Sudo,
+			ListFn:   s.listContainersForMonitoring,
+			Interval: 5 * time.Second,
+		})
+	}
 	go s.metrics.Run(context.Background())
 	// Load existing config if present.
 	if cfg, err := opts.Store.Load(); err == nil {
@@ -139,8 +149,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /containers/{name}/delete", s.protected(http.HandlerFunc(s.handleRemove)))
 	mux.Handle("GET /vsat/{name}/terminal", s.protected(http.HandlerFunc(s.handleTerminalPage)))
 	mux.Handle("GET /vsat/{name}/terminal/ws", s.protected(http.HandlerFunc(s.handleTerminalWS)))
-	mux.Handle("GET /vsat/{name}/monitoring", s.protected(http.HandlerFunc(s.handleMonitoringPage)))
-	mux.Handle("GET /vsat/{name}/monitoring/data", s.protected(http.HandlerFunc(s.handleMonitoringData)))
+	mux.Handle("GET /monitoring", s.protected(http.HandlerFunc(s.handleMonitoringPage)))
+	mux.Handle("GET /monitoring/data", s.protected(http.HandlerFunc(s.handleMonitoringData)))
 
 	return s.withConfigGate(mux)
 }
@@ -183,4 +193,16 @@ func cacheStatic(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) listContainersForMonitoring(ctx context.Context) ([]metrics.ContainerInfo, error) {
+	containers, err := s.lxd.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]metrics.ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		out = append(out, metrics.ContainerInfo{Name: c.Name, Status: c.Status})
+	}
+	return out, nil
 }

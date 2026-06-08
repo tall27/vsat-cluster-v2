@@ -4,41 +4,19 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
 
-const samplePrometheusText = `
-# HELP lxd_cpu_effective_total CPUs available
-# TYPE lxd_cpu_effective_total gauge
-lxd_cpu_effective_total{name="vsat-a",project="default",type="container"} 2
-# HELP lxd_cpu_seconds_total CPU usage
-# TYPE lxd_cpu_seconds_total counter
-lxd_cpu_seconds_total{cpu="0",name="vsat-a",project="default",type="container"} %f
-lxd_cpu_seconds_total{cpu="1",name="vsat-a",project="default",type="container"} 0
-# HELP lxd_memory_MemTotal_bytes Memory total
-lxd_memory_MemTotal_bytes{name="vsat-a",project="default",type="container"} 1000
-lxd_memory_MemAvailable_bytes{name="vsat-a",project="default",type="container"} %f
-# HELP lxd_network_receive_bytes_total Bytes received
-lxd_network_receive_bytes_total{device="eth0",name="vsat-a",project="default",type="container"} %f
-lxd_network_receive_bytes_total{device="lo",name="vsat-a",project="default",type="container"} 999999
-lxd_network_transmit_bytes_total{device="eth0",name="vsat-a",project="default",type="container"} %f
-lxd_network_receive_packets_total{device="eth0",name="vsat-a",project="default",type="container"} %f
-lxd_network_transmit_packets_total{device="eth0",name="vsat-a",project="default",type="container"} %f
-lxd_cpu_seconds_total{cpu="0",name="other",project="default",type="virtual-machine"} 5000
-`
-
-// fakeRunner returns canned Prometheus text on each call, in order.
 type fakeRunner struct {
-	mu      sync.Mutex
 	outputs [][]byte
 	calls   int
 }
 
-func (f *fakeRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+func (f *fakeRunner) Run(_ context.Context, _ ...string) ([]byte, error) {
+	if len(f.outputs) == 0 {
+		return []byte{}, nil
+	}
 	if f.calls >= len(f.outputs) {
 		return f.outputs[len(f.outputs)-1], nil
 	}
@@ -47,116 +25,209 @@ func (f *fakeRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-func render(cpuSeconds, memAvail, rxBytes, txBytes, rxPackets, txPackets float64) []byte {
-	s := samplePrometheusText
-	for _, v := range []float64{cpuSeconds, memAvail, rxBytes, txBytes, rxPackets, txPackets} {
-		s = strings.Replace(s, "%f", strconv.FormatFloat(v, 'f', -1, 64), 1)
-	}
-	return []byte(s)
-}
+const lxdMetricsFixture = `
+# HELP lxd_cpu_effective_total CPUs available
+lxd_cpu_effective_total{name="vsat-a",project="default",type="container"} 2
+lxd_cpu_effective_total{name="vsat-b",project="default",type="container"} 1
+lxd_cpu_seconds_total{cpu="0",name="vsat-a",project="default",type="container"} 100
+lxd_cpu_seconds_total{cpu="1",name="vsat-a",project="default",type="container"} 300
+lxd_cpu_seconds_total{cpu="0",name="vsat-b",project="default",type="container"} 400
+lxd_memory_MemTotal_bytes{name="vsat-a",project="default",type="container"} 1024
+lxd_memory_MemAvailable_bytes{name="vsat-a",project="default",type="container"} 256
+lxd_memory_MemTotal_bytes{name="vsat-b",project="default",type="container"} 2048
+lxd_memory_MemAvailable_bytes{name="vsat-b",project="default",type="container"} 1024
+lxd_network_receive_bytes_total{device="eth0",name="vsat-a",project="default",type="container"} 1000
+lxd_network_receive_bytes_total{device="lo",name="vsat-a",project="default",type="container"} 9999
+lxd_network_transmit_bytes_total{device="eth0",name="vsat-a",project="default",type="container"} 1500
+lxd_disk_read_bytes_total{name="vsat-a",project="default",type="container"} 4096
+lxd_disk_written_bytes_total{name="vsat-a",project="default",type="container"} 2048
+lxd_network_receive_bytes_total{device="eth0",name="vsat-b",project="default",type="container"} 50
+lxd_network_transmit_bytes_total{device="eth0",name="vsat-b",project="default",type="container"} 60
+lxd_disk_read_bytes_total{name="vsat-b",project="default",type="container"} 3000
+lxd_disk_written_bytes_total{name="vsat-b",project="default",type="container"} 3000
+lxd_cpu_seconds_total{cpu="0",name="ignored",project="default",type="virtual-machine"} 9001
+`
 
-func TestParseMetricsFiltersToContainerAndEth0(t *testing.T) {
-	out := parseMetrics(render(10, 700, 1000, 2000, 10, 20))
-	s, ok := out["vsat-a"]
+func TestParseMetricsParsesContainerCPUAndCounters(t *testing.T) {
+	parsed := parseMetrics([]byte(lxdMetricsFixture))
+	a, ok := parsed["vsat-a"]
 	if !ok {
-		t.Fatalf("expected sample for vsat-a, got %v", out)
+		t.Fatalf("expected vsat-a sample, got %v", parsed)
 	}
-	if s.cpuSeconds != 10 {
-		t.Errorf("cpuSeconds = %v, want 10 (cpu=1 line is 0)", s.cpuSeconds)
+	if a.cpuSeconds != 400 {
+		t.Fatalf("cpu seconds=%v want=400", a.cpuSeconds)
 	}
-	if s.cpuCount != 2 {
-		t.Errorf("cpuCount = %v, want 2", s.cpuCount)
+	if a.cpuCount != 2 {
+		t.Fatalf("cpu count=%v want=2", a.cpuCount)
 	}
-	if s.memAvailable != 700 {
-		t.Errorf("memAvailable = %v, want 700", s.memAvailable)
+	if a.memTotal != 1024 {
+		t.Fatalf("memTotal=%v want=1024", a.memTotal)
 	}
-	if s.netRxBytes != 1000 {
-		t.Errorf("netRxBytes = %v, want 1000 (lo device must be excluded)", s.netRxBytes)
+	if a.memAvailable != 256 {
+		t.Fatalf("memAvailable=%v want=256", a.memAvailable)
 	}
-	if _, ok := out["other"]; ok {
-		t.Errorf("virtual-machine type should be filtered out")
+	if a.netRxBytes != 1000 {
+		t.Fatalf("rx=%v want=1000", a.netRxBytes)
+	}
+	if a.netTxBytes != 1500 {
+		t.Fatalf("tx=%v want=1500", a.netTxBytes)
+	}
+	if a.diskReadBytes != 4096 {
+		t.Fatalf("disk read=%v want=4096", a.diskReadBytes)
+	}
+	if a.diskWriteBytes != 2048 {
+		t.Fatalf("disk write=%v want=2048", a.diskWriteBytes)
+	}
+	if _, ok := parsed["ignored"]; ok {
+		t.Fatalf("non-container data should be filtered out")
 	}
 }
 
-func TestCollectorDerivesRatesAcrossPolls(t *testing.T) {
-	runner := &fakeRunner{outputs: [][]byte{
-		render(10, 800, 1000, 2000, 10, 20),
-		render(12, 600, 1200, 2400, 30, 60),
-	}}
-	c := NewCollector(Options{Runner: runner, Window: 10})
-
-	ctx := context.Background()
-	c.poll(ctx)
-	if _, ok := c.Snapshot("vsat-a"); ok {
-		t.Fatalf("expected no snapshot after a single poll (need a delta)")
+func TestParseProcStatParsesCPU(t *testing.T) {
+	raw := []byte("cpu  1024 200 300 400 500 600 700 800 900 1000 1100\n")
+	total, idle, err := parseProcStat(raw)
+	if err != nil {
+		t.Fatalf("parseProcStat: %v", err)
 	}
-
-	// Force a deterministic dt by directly invoking record with a synthetic time.
-	c.mu.Lock()
-	c.prev["vsat-a"] = rawSample{
-		at:         time.Now().Add(-10 * time.Second),
-		cpuSeconds: 10, cpuCount: 2,
-		memTotal: 1000, memAvailable: 800,
-		netRxBytes: 1000, netTxBytes: 2000,
-		netRxPackets: 10, netTxPackets: 20,
+	if total != 7524 {
+		t.Fatalf("total=%v want=%d", total, 7524)
 	}
-	c.mu.Unlock()
+	if idle != 900 {
+		t.Fatalf("idle=%v want=%d", idle, 900)
+	}
+}
 
-	c.record("vsat-a", rawSample{
-		at:         time.Now(),
-		cpuSeconds: 12, cpuCount: 2,
-		memTotal: 1000, memAvailable: 600,
-		netRxBytes: 1200, netTxBytes: 2400,
-		netRxPackets: 30, netTxPackets: 60,
+func TestParseProcMeminfoParsesTotals(t *testing.T) {
+	raw := []byte(`
+MemTotal:       2048000 kB
+MemFree:        800000 kB
+MemAvailable:   1024000 kB
+`)
+	total, free, err := parseProcMeminfo(raw)
+	if err != nil {
+		t.Fatalf("parseProcMeminfo: %v", err)
+	}
+	if total != 2.097152e+09 {
+		t.Fatalf("total=%v want=%g", total, 2.097152e+09)
+	}
+	if free != 1.048576e+09 {
+		t.Fatalf("free=%v want=%g", free, 1.048576e+09)
+	}
+}
+
+func TestParseProcMeminfoFallsBackToMemFree(t *testing.T) {
+	raw := []byte(`
+MemTotal:       2048000 kB
+MemFree:        1500000 kB
+`)
+	total, free, err := parseProcMeminfo(raw)
+	if err != nil {
+		t.Fatalf("parseProcMeminfo: %v", err)
+	}
+	if total != 2.097152e+09 {
+		t.Fatalf("total=%v want=%g", total, 2.097152e+09)
+	}
+	if free != 1.536e+09 {
+		t.Fatalf("free=%v want=%g", free, 1.536e+09)
+	}
+}
+
+func TestParseProcDiskstatsParsesBytes(t *testing.T) {
+	raw := []byte(`
+8 0 sda 100 0 200 0 0 0 300 0 0 0 0 0 0
+8 1 sdb1 2 0 10 0 0 0 20 0 0 0 0 0 0
+7 0 loop0 1 0 10 0 0 0 20 0 0 0 0 0 0
+`)
+	read, write, err := parseProcDiskstats(raw)
+	if err != nil {
+		t.Fatalf("parseProcDiskstats: %v", err)
+	}
+	if read != 107520 {
+		t.Fatalf("read=%v want=%v", read, 107520)
+	}
+	if write != 163840 {
+		t.Fatalf("write=%v want=%v", write, 163840)
+	}
+}
+
+func TestParseProcNetDevParsesBytes(t *testing.T) {
+	raw := []byte(`
+Inter-|   Receive                                                | Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+   lo:    100      0    0    0    0    0     0          0         10      0    0    0    0    0    0       0
+ eth0:    200      0    0    0    0    0     0          0         400     0    0    0    0    0    0       0
+`)
+	rx, tx, err := parseProcNetDev(raw)
+	if err != nil {
+		t.Fatalf("parseProcNetDev: %v", err)
+	}
+	if rx != 200 {
+		t.Fatalf("rx=%v want=200", rx)
+	}
+	if tx != 400 {
+		t.Fatalf("tx=%v want=400", tx)
+	}
+}
+
+func TestUtilizationClassThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		v    float64
+		want string
+	}{
+		{69.9, "normal"},
+		{70, "warning"},
+		{79.9, "warning"},
+		{80, "critical"},
+	} {
+		t.Run(strconv.FormatFloat(tc.v, 'f', 1, 64), func(t *testing.T) {
+			if got := UtilizationClass(tc.v); got != tc.want {
+				t.Fatalf("UtilizationClass(%v) = %s, want %s", tc.v, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCollectorSnapshotIncludesHostAndContainers(t *testing.T) {
+	c := NewCollector(Options{
+		Runner: &fakeRunner{outputs: [][]byte{[]byte(lxdMetricsFixture), []byte(lxdMetricsFixture)}},
+		ReadFile: func(name string) ([]byte, error) {
+			switch {
+			case strings.Contains(name, "/proc/stat"):
+				return []byte("cpu  1 2 3 4 5 6 7 8 9 10 11\n"), nil
+			case strings.Contains(name, "/proc/meminfo"):
+				return []byte("MemTotal:       1024 kB\nMemAvailable:  512 kB\n"), nil
+			case strings.Contains(name, "/proc/diskstats"):
+				return []byte("8 0 sda 1 0 2 0 0 0 3 0 0 0 0 0 0\n"), nil
+			case strings.Contains(name, "/proc/net/dev"):
+				return []byte(`
+Inter-|   Receive                                                | Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+ eth0:    10      0    0    0    0    0     0          0         20     0    0    0    0    0    0       0
+`), nil
+			default:
+				return nil, nil
+			}
+		},
+		ListFn: func(_ context.Context) ([]ContainerInfo, error) {
+			return []ContainerInfo{
+				{Name: "vsat-a", Status: "Running"},
+				{Name: "vsat-b", Status: "Stopped"},
+			}, nil
+		},
+		Interval: 60 * time.Second,
 	})
-
-	snap, ok := c.Snapshot("vsat-a")
-	if !ok {
-		t.Fatalf("expected a snapshot after two samples")
+	c.poll(context.Background())
+	snapshot := c.Snapshot()
+	if len(snapshot.Rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(snapshot.Rows))
 	}
-	if len(snap.CPUPercent) != 1 {
-		t.Fatalf("expected 1 cpu point, got %d", len(snap.CPUPercent))
+	if snapshot.Rows[0].Type != "Host" || snapshot.Rows[0].Name != "host" {
+		t.Fatalf("first row should be host, got %+v", snapshot.Rows[0])
 	}
-	// (12-10)/10s = 0.2 cores / 2 cores * 100 = 10%
-	if got := snap.CPUPercent[0].Value; got < 9.9 || got > 10.1 {
-		t.Errorf("cpuPercent = %v, want ~10", got)
+	if snapshot.Rows[1].Name != "vsat-a" || snapshot.Rows[2].Name != "vsat-b" {
+		t.Fatalf("expected vsat-a and vsat-b rows, got %+v", snapshot.Rows)
 	}
-	// used = 1000-600 = 400 / 1000 = 40%
-	if got := snap.MemoryPercent[0].Value; got < 39.9 || got > 40.1 {
-		t.Errorf("memoryPercent = %v, want ~40", got)
-	}
-	// (1200-1000)/10s = 20 bytes/sec
-	if got := snap.NetRxBytesPerSec[0].Value; got < 19.9 || got > 20.1 {
-		t.Errorf("netRxBytesPerSec = %v, want ~20", got)
-	}
-}
-
-func TestRateClampsCounterResetToZero(t *testing.T) {
-	if got := rate(5, 100, 10); got != 0 {
-		t.Errorf("rate() on counter reset = %v, want 0", got)
-	}
-	if got := rate(150, 100, 10); got != 5 {
-		t.Errorf("rate() = %v, want 5", got)
-	}
-}
-
-func TestSeriesRingBufferCapsAtWindow(t *testing.T) {
-	s := newSeries(3)
-	for i := 0; i < 5; i++ {
-		s.add(time.Now(), float64(i))
-	}
-	pts := s.snapshot()
-	if len(pts) != 3 {
-		t.Fatalf("len = %d, want 3", len(pts))
-	}
-	if pts[0].Value != 2 || pts[2].Value != 4 {
-		t.Errorf("ring buffer kept wrong window: %+v", pts)
-	}
-}
-
-func TestSnapshotUnknownContainer(t *testing.T) {
-	c := NewCollector(Options{Runner: &fakeRunner{outputs: [][]byte{[]byte("")}}})
-	if _, ok := c.Snapshot("nope"); ok {
-		t.Errorf("expected no snapshot for unknown container")
+	if snapshot.Rows[2].Status != "Stopped" {
+		t.Fatalf("stopped row should preserve status")
 	}
 }
