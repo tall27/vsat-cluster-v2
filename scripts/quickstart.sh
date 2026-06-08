@@ -40,6 +40,7 @@ chmod +x "${WORK}/vsat-webapp"
 log "downloading scripts"
 curl -fsSL -o "${WORK}/scripts.tar.gz" "${SCRIPTS_URL}"
 tar -C "${WORK}" -xzf "${WORK}/scripts.tar.gz"
+chmod +x "${WORK}"/scripts/*.sh
 
 log "preparing the host (LXD, vsat-nested profile, NAT)"
 "${WORK}/scripts/bootstrap-host.sh" "$@"
