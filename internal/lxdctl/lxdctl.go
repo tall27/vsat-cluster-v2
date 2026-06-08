@@ -25,6 +25,11 @@ var (
 	kmsgRetryDelay    = 2 * time.Second
 )
 
+// k9sVersion pins the k9s release installed into every new container, so
+// installs are reproducible and don't depend on GitHub's releases API from
+// inside the container (rate limits, drift). Bump deliberately when needed.
+const k9sVersion = "v0.51.0"
+
 // Container is the trimmed view of an LXD instance the UI needs.
 type Container struct {
 	Name   string `json:"name"`
@@ -139,9 +144,10 @@ func (c *Client) List(ctx context.Context) ([]Container, error) {
 	return parseContainers(out)
 }
 
-// Add launches a new container with the configured profile, enforcing the cap.
-// It applies the /dev/kmsg workaround required for nested k3s stability, and
-// disables the in-container journald watchdog (see comment at the call site).
+// Add launches a new container with the configured profile, enforcing the cap,
+// then applies post-launch fixes/tools (see comment at the call site): the
+// /dev/kmsg workaround required for nested k3s stability, disabling the
+// in-container journald watchdog, and installing k9s.
 func (c *Client) Add(ctx context.Context, name string) error {
 	if err := c.ValidateName(name); err != nil {
 		return err
@@ -166,12 +172,24 @@ func (c *Client) Add(ctx context.Context, name string) error {
 	); err != nil {
 		return fmt.Errorf("lxc launch: %w", err)
 	}
-	// Post-launch fixes inside the container (nested k3s prerequisites), applied
-	// in one exec: /dev/kmsg workaround, and disabling journald's watchdog
-	// (a privileged nested container's heavy k3s/kubelet log volume can stall
-	// journald past its 3-minute watchdog, which SIGABRTs it and triggers an
-	// apport crash-report capture loop — meaningless churn with no real hardware
-	// to protect). Retry: the container's init may not be ready to `exec` into yet.
+	// Post-launch fixes/tools inside the container, applied in one exec:
+	//   - /dev/kmsg workaround (nested k3s prerequisite)
+	//   - disabling journald's watchdog (a privileged nested container's heavy
+	//     k3s/kubelet log volume can stall journald past its 3-minute watchdog,
+	//     which SIGABRTs it and triggers an apport crash-report capture loop —
+	//     meaningless churn with no real hardware to protect)
+	//   - installing k9s (pinned version) for in-container cluster inspection
+	// Retry: the container's init may not be ready to `exec` into yet.
+	postLaunchCmd := fmt.Sprintf(
+		`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && `+
+			`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && `+
+			`mkdir -p /etc/systemd/journald.conf.d && `+
+			`printf '[Journal]\nWatchdogSec=0\n' > /etc/systemd/journald.conf.d/no-watchdog.conf && `+
+			`systemctl restart systemd-journald && `+
+			`curl -fsSL https://github.com/derailed/k9s/releases/download/%s/k9s_Linux_amd64.tar.gz | tar -xz -C /usr/local/bin k9s && `+
+			`chmod +x /usr/local/bin/k9s`,
+		k9sVersion,
+	)
 	var kmsgErr error
 	for attempt := 0; attempt < kmsgRetryAttempts; attempt++ {
 		if attempt > 0 {
@@ -183,12 +201,7 @@ func (c *Client) Add(ctx context.Context, name string) error {
 		}
 		if _, kmsgErr = c.runner.Run(ctx,
 			"exec", name, "--",
-			"bash", "-lc",
-			`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && `+
-				`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && `+
-				`mkdir -p /etc/systemd/journald.conf.d && `+
-				`printf '[Journal]\nWatchdogSec=0\n' > /etc/systemd/journald.conf.d/no-watchdog.conf && `+
-				`systemctl restart systemd-journald`,
+			"bash", "-lc", postLaunchCmd,
 		); kmsgErr == nil {
 			return nil
 		}
