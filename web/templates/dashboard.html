@@ -26,21 +26,34 @@
 </section>
 
 <dialog id="add-modal" class="modal">
-  <form method="post" action="/containers" class="stack"
-        onsubmit="document.getElementById('add-modal').close()">
-    <h2>Add a VSatellite</h2>
-    <label class="field">
-      <span>Name</span>
-      <input type="text" name="name" value="{{.SuggestedName}}" required
-             pattern="{{.Prefix}}-[a-z0-9-]+" autocomplete="off">
-      <small class="muted">must start with <code>{{.Prefix}}-</code></small>
-    </label>
-    <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-modal').close()">Cancel</button>
-      <button type="submit" class="btn btn-primary">Create</button>
+  <form method="post" action="/containers" class="stack" onsubmit="return startAddVsat()">
+    <div id="add-modal-fields">
+      <h2>Add a VSatellite</h2>
+      <label class="field">
+        <span>Name</span>
+        <input type="text" id="add-modal-name" name="name" value="{{.SuggestedName}}" required
+               pattern="{{.Prefix}}-[a-z0-9-]+" autocomplete="off">
+        <small class="muted">must start with <code>{{.Prefix}}-</code></small>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-modal').close()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create</button>
+      </div>
+    </div>
+    <div id="add-modal-pending" class="stack" hidden>
+      <h2>{{template "icon-hourglass" .}} Creating <span id="add-modal-pending-name" class="mono"></span>&hellip;</h2>
+      <p class="muted">Provisioning the container — this takes a few seconds.</p>
     </div>
   </form>
 </dialog>
+<script>
+  function startAddVsat() {
+    document.getElementById('add-modal-pending-name').textContent = document.getElementById('add-modal-name').value;
+    document.getElementById('add-modal-fields').hidden = true;
+    document.getElementById('add-modal-pending').hidden = false;
+    return true;
+  }
+</script>
 {{end}}
 
 {{define "scripts"}}

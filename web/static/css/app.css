@@ -59,6 +59,8 @@ body {
 .icon { width: 15px; height: 15px; stroke: currentColor; fill: none; vertical-align: middle; }
 .icon-metric { width: 13px; height: 13px; margin-right: 6px; }
 .icon-inline { width: 16px; height: 16px; margin-right: 6px; }
+.icon-spin { width: 18px; height: 18px; margin-right: 8px; animation: spin 1.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* table */
 .grid { width: 100%; border-collapse: collapse; }
