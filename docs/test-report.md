@@ -83,11 +83,53 @@ already been created — orphaned without the fix.
   `/dev/kmsg` persisted across the restart (the `tmpfiles.d` rule re-creates the
   symlink on every boot), and k3s came up `active (running)` with `coredns`,
   `local-path-provisioner` and `metrics-server` pods all `1/1 Running`.
-- `internal/lxdctl.Add` now retries the kmsg-fix step (`kmsgRetryAttempts` = 6,
-  `kmsgRetryDelay` = 2 s) instead of failing on the first race, so every container
-  the app creates is guaranteed to get the workaround. Covered by
-  `TestAddRetriesKmsgFixUntilContainerReady` and
+- `internal/lxdctl.Add` now retries the post-launch fix step (`kmsgRetryAttempts` = 15,
+  `kmsgRetryDelay` = 2 s, ~30 s budget — bumped from the original 6 once side-by-side
+  comparison showed the race was load/cadence-dependent, not host-config-dependent;
+  see the COW finding below for the actual fix to the root cause) instead of failing
+  on the first race, so every container the app creates is guaranteed to get the
+  workaround. Covered by `TestAddRetriesKmsgFixUntilContainerReady` and
   `TestAddFailsAfterKmsgRetriesExhausted` in `internal/lxdctl/lxdctl_test.go`.
+
+### 3. Root cause was launch cadence + slow `dir`-backed storage, not host config
+
+Side-by-side comparison against the original reference host (`18.218.238.174`)
+showed **identical** `vsat-nested` profiles and bootstrap config — the difference
+was creation cadence: 4-6 minute gaps between `lxc launch` calls succeeded 3/3,
+while 1-2 minute gaps succeeded only 1/3. Root cause: the default `dir` storage
+driver does a full filesystem copy on every launch, slow enough on a loaded
+2-core box that a freshly launched container can miss the kmsg-retry window
+entirely when launches stack up.
+
+**Fix**: provision a 20GB loop-file **btrfs** pool (`cow`) and point
+`vsat-nested`'s root device at it — copy-on-write clones instead of full copies.
+Validated live: 3 concurrent launches all became `lxc exec`-ready in **~1 second**
+(vs. routinely blowing the 12 s budget on `dir`). Now baked into
+`scripts/bootstrap-host.sh` (falls back to the default pool if `/` doesn't have
+`COW_SIZE_GB + 5`GB free).
+
+### 4. Heavy `apport` churn traced to journald's watchdog, not real crashes
+
+The user noticed heavy `apport` activity inside containers. Traced to: a
+privileged nested container's k3s/kubelet log volume stalls journald past its
+3-minute watchdog timeout → SIGABRT → kernel `core_pattern` → apport
+crash-capture — generating ~297KB crash files identically across all three test
+containers, with no actual hardware to protect. **Fix**: ship a `WatchdogSec=0`
+drop-in (`/etc/systemd/journald.conf.d/no-watchdog.conf`) and restart
+`systemd-journald`, applied as part of the same combined post-launch step as the
+kmsg fix.
+
+### 5. k9s install requires DNS to be ready, and a new release to ship
+
+Added a pinned-version k9s install (`internal/lxdctl.k9sVersion`) to the same
+combined post-launch `lxc exec`. First test failed with
+`curl: (6) Could not resolve host: github.com` — DNS isn't ready immediately
+after `lxc launch`; resolved by the existing retry loop (the same race the kmsg
+fix already handles). Also discovered `quickstart.sh` installs from the
+**latest GitHub release**, not branch HEAD — `bootstrap-host.sh`/`lxdctl`
+changes only reach fresh installs after cutting a new release (confirmed via
+`strings <binary> | grep -c 'derailed/k9s'` returning `0` on a stale binary
+predating the change).
 
 ## Monitoring data-source research (2026-06-07)
 

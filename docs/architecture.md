@@ -48,11 +48,21 @@ password, over HTTPS. The app runs **on the host it manages**.
   non-link-local IPv4 from `eth0`/any non-`lo` interface).
 - **Add** → validate name (must be `vsat-…`, LXD-legal), refuse duplicates, enforce
   the cap, then `lxc launch ubuntu:24.04 <name> -p vsat-nested -c limits.cpu=2 -c
-  limits.memory=3GiB`, then apply the `/dev/kmsg` `tmpfiles.d` workaround inside.
+  limits.memory=3GiB`, then run **one** combined post-launch `lxc exec` inside:
+  the `/dev/kmsg` `tmpfiles.d` workaround, disabling journald's watchdog
+  (`WatchdogSec=0` — a privileged nested container's heavy k3s/kubelet log volume
+  can stall journald past its 3-minute watchdog, SIGABRT it, and trigger an
+  apport crash-capture loop with no real hardware to protect), and installing a
+  pinned version of [k9s](https://github.com/derailed/k9s) to `/usr/local/bin`
+  for in-container cluster inspection.
   `lxc launch` returns once the container *starts* booting, not once its init is
-  ready for `lxc exec`, so the kmsg step retries (`kmsgRetryAttempts` /
-  `kmsgRetryDelay`, ~6 attempts / 2 s apart) rather than risking a container that
-  exists but never got the fix — see [the live finding](test-report.md#follow-up-findings-from-real-vsatellite-installs).
+  ready for `lxc exec`, so this step retries as a whole (`kmsgRetryAttempts` /
+  `kmsgRetryDelay`, 15 attempts / 2 s apart, ~30 s budget) rather than risking a
+  container that exists but never got the fixes — see [the live finding](test-report.md#follow-up-findings-from-real-vsatellite-installs).
+  `Add` is fully synchronous: the HTTP response to `POST /containers` only
+  returns once the container is genuinely ready, which the dashboard's "Add
+  VSAT" modal reflects by staying open with a spinning hourglass for the
+  duration instead of closing immediately.
 - **Remove** → `lxc delete --force <name>`.
 - Execution is behind `CommandRunner`, so production uses the `lxc` CLI (optionally
   `sudo -n`) and tests inject a fake.
@@ -128,9 +138,18 @@ cells show `--`.
 ## Host prerequisites (`scripts/bootstrap-host.sh`)
 
 Ported from the sibling project's `bootstrap-onebox.sh`:
-- Install/init LXD; create the **`vsat-nested`** profile (`security.nesting`,
-  `security.privileged`, kernel modules, `raw.lxc` apparmor=unconfined / no cap drop
-  / full cgroup devices / rw proc+sys).
+- Install/init LXD; provision a **20GB loop-file btrfs pool (`cow`)** when `/`
+  has the room, and point the `vsat-nested` profile's root device at it instead
+  of the default `dir`-backed pool. `dir` does a full filesystem copy on every
+  `lxc launch` — slow enough that back-to-back launches can miss the kmsg-fix
+  retry window (see [the live finding](test-report.md#follow-up-findings-from-real-vsatellite-installs)).
+  `btrfs` gives near-instant copy-on-write clones with no dedicated block device:
+  confirmed live, exec-ready in ~1 s vs. routinely blowing a 12 s budget on `dir`,
+  even with three containers launched concurrently. Falls back to the default
+  pool when there isn't `COW_SIZE_GB + 5`GB free.
+- Create the **`vsat-nested`** profile (`security.nesting`, `security.privileged`,
+  kernel modules, `raw.lxc` apparmor=unconfined / no cap drop / full cgroup
+  devices / rw proc+sys).
 - `net.ipv4.ip_forward=1`, `FORWARD` accepts for `lxdbr0`, and a **SNAT** from the
   `lxdbr0` CIDR to the host's primary IP — the one-public-IP egress path.
 - Set `boot.autostart=true` on existing containers.

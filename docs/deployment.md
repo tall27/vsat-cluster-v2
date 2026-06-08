@@ -37,7 +37,9 @@ sudo ./scripts/bootstrap-host.sh            # auto-detects the primary IP for SN
 sudo ./scripts/bootstrap-host.sh 10.0.2.115
 ```
 
-This installs/initialises LXD, creates the `vsat-nested` profile, enables IP
+This installs/initialises LXD, provisions a 20GB loop-file btrfs pool (`cow`) for
+fast copy-on-write container launches when `/` has the room (falls back to the
+default pool otherwise), creates the `vsat-nested` profile, enables IP
 forwarding + the SNAT rule for `lxdbr0`, and sets autostart on existing containers.
 It is idempotent.
 
@@ -104,7 +106,8 @@ cost, confirmed live).
   includes this fix (anything built after 2026-06-07).
 - **`vsatctl install` fails installing k3s (`sh: [: Illegal number:`)** — the
   container is missing the `/dev/kmsg` workaround. `internal/lxdctl.Add` now applies
-  and retries this automatically for every container the app creates; if a container
+  and retries this automatically (alongside disabling journald's watchdog and
+  installing k9s — see below) for every container the app creates; if a container
   was created some other way, apply it by hand and restart the container:
   ```bash
   sudo lxc exec <name> -- bash -lc \
@@ -114,6 +117,23 @@ cost, confirmed live).
   ```
   See [docs/test-report.md](test-report.md#follow-up-findings-from-real-vsatellite-installs)
   for the full investigation.
+- **Container generates a heavy stream of `apport`/crash-report churn** — caused
+  by journald's 3-minute watchdog SIGABRT-ing under k3s/kubelet's heavy log
+  volume, which the kernel's `core_pattern` then routes to apport. Every
+  container the app creates now ships a `WatchdogSec=0` drop-in
+  (`/etc/systemd/journald.conf.d/no-watchdog.conf`) to prevent it; apply the same
+  drop-in and `systemctl restart systemd-journald` by hand on older containers.
+- **New container missing `k9s`** — the binary (pinned version, see
+  `internal/lxdctl.k9sVersion`) is installed as part of the same combined
+  post-launch step as the kmsg/journald fixes. A binary built before that change
+  won't install it into new containers; rebuild/redeploy from a current release,
+  or install it by hand: `curl -fsSL https://github.com/derailed/k9s/releases/download/<version>/k9s_Linux_amd64.tar.gz | sudo lxc exec <name> -- bash -lc 'tar -xz -C /usr/local/bin k9s && chmod +x /usr/local/bin/k9s'`.
+- **Containers slow to become `lxc exec`-ready / kmsg fix exhausts its retries
+  under load** — the default `dir` storage driver does a full filesystem copy on
+  every `lxc launch`; back-to-back launches can blow the retry budget. Re-run
+  `bootstrap-host.sh` on a host provisioned before the COW pool existed to
+  provision the loop-file `cow` btrfs pool and rewire `vsat-nested` onto it
+  (existing containers are unaffected; only future launches benefit).
 
 ## Reaching the UI
 
