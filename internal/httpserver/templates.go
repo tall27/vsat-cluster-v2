@@ -16,10 +16,11 @@ type templates struct {
 func loadTemplates() (*templates, error) {
 	shared := []string{"templates/layout.html", "templates/partials.html"}
 	pages := map[string]string{
-		"login":     "templates/login.html",
-		"setup":     "templates/setup.html",
-		"dashboard": "templates/dashboard.html",
-		"terminal":  "templates/terminal.html",
+		"login":      "templates/login.html",
+		"setup":      "templates/setup.html",
+		"dashboard":  "templates/dashboard.html",
+		"terminal":   "templates/terminal.html",
+		"monitoring": "templates/monitoring.html",
 	}
 	out := &templates{pages: make(map[string]*template.Template, len(pages))}
 	for name, file := range pages {

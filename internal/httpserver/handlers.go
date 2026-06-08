@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/tall27/vsat-cluster-v2/internal/auth"
 	"github.com/tall27/vsat-cluster-v2/internal/config"
 	"github.com/tall27/vsat-cluster-v2/internal/lxdctl"
+	"github.com/tall27/vsat-cluster-v2/internal/metrics"
 )
 
 // pageData is the unified view model passed to templates.
@@ -203,6 +205,40 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.term.ServeWS(w, r, name)
+}
+
+// --- monitoring ----------------------------------------------------------
+
+func (s *Server) handleMonitoringPage(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.lxd.ValidateName(name); err != nil {
+		http.Error(w, "invalid container name", http.StatusBadRequest)
+		return
+	}
+	s.render(w, "monitoring", pageData{ShowNav: true, Host: s.host, Name: name})
+}
+
+func (s *Server) handleMonitoringData(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.lxd.ValidateName(name); err != nil {
+		http.Error(w, "invalid container name", http.StatusBadRequest)
+		return
+	}
+	snap, ok := s.metrics.Snapshot(name)
+	w.Header().Set("Content-Type", "application/json")
+	if !ok {
+		// Container exists but the collector hasn't derived a rate yet
+		// (needs two polls) — return empty series rather than an error so
+		// the chart can render its "waiting for data" state.
+		json.NewEncoder(w).Encode(struct {
+			Ready bool `json:"ready"`
+		}{false})
+		return
+	}
+	json.NewEncoder(w).Encode(struct {
+		Ready bool `json:"ready"`
+		metrics.Snapshot
+	}{true, snap})
 }
 
 // suggestName proposes the next free vsat-<letter> name.

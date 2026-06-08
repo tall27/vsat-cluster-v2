@@ -16,6 +16,7 @@ import (
 	"github.com/tall27/vsat-cluster-v2/internal/auth"
 	"github.com/tall27/vsat-cluster-v2/internal/config"
 	"github.com/tall27/vsat-cluster-v2/internal/lxdctl"
+	"github.com/tall27/vsat-cluster-v2/internal/metrics"
 	"github.com/tall27/vsat-cluster-v2/internal/webterm"
 	"github.com/tall27/vsat-cluster-v2/web"
 )
@@ -37,6 +38,7 @@ type Server struct {
 	lxd      *lxdctl.Client
 	tmpl     *templates
 	term     *webterm.Handler
+	metrics  *metrics.Collector
 	host     string
 	secureCk bool
 	logger   *log.Logger
@@ -82,6 +84,12 @@ func New(opts Options) (*Server, error) {
 		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 		return cmd
 	})
+	// LXD's built-in /1.0/metrics endpoint already exposes per-container
+	// CPU/memory/network counters in Prometheus format — poll it locally
+	// rather than standing up Netdata/Prometheus/Grafana ("pure vendor
+	// functionality first"). Negligible overhead: ~0.2-0.3s and ~65KB per poll.
+	s.metrics = metrics.NewCollector(metrics.Options{Bin: lxcBin, Sudo: opts.Sudo})
+	go s.metrics.Run(context.Background())
 	// Load existing config if present.
 	if cfg, err := opts.Store.Load(); err == nil {
 		s.applyConfig(cfg)
@@ -131,6 +139,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /containers/{name}/delete", s.protected(http.HandlerFunc(s.handleRemove)))
 	mux.Handle("GET /vsat/{name}/terminal", s.protected(http.HandlerFunc(s.handleTerminalPage)))
 	mux.Handle("GET /vsat/{name}/terminal/ws", s.protected(http.HandlerFunc(s.handleTerminalWS)))
+	mux.Handle("GET /vsat/{name}/monitoring", s.protected(http.HandlerFunc(s.handleMonitoringPage)))
+	mux.Handle("GET /vsat/{name}/monitoring/data", s.protected(http.HandlerFunc(s.handleMonitoringData)))
 
 	return s.withConfigGate(mux)
 }

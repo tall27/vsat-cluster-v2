@@ -74,6 +74,49 @@ container images already ship `ncurses-term`, which provides the `xterm-256color
 entry, so forcing the variable is sufficient (no extra package needed). See
 [the live finding](test-report.md#follow-up-findings-from-real-vsatellite-installs).
 
+## Monitoring (`internal/metrics`)
+
+Per-container CPU/memory/network charts, in the spirit of the AWS CloudWatch
+"Monitoring" tab the user wants to mirror — one panel grid per VSatellite, accessed
+via a "📊 Monitoring" link next to "⌧ Terminal" on the dashboard.
+
+**Data source — pure vendor functionality, no new agents.** LXD already exposes a
+Prometheus-format metrics endpoint locally: `lxc query /1.0/metrics`. It returns
+per-instance CPU (`lxd_cpu_seconds_total`, `lxd_cpu_effective_total`), memory
+(`lxd_memory_MemTotal_bytes`/`MemAvailable_bytes`) and network
+(`lxd_network_{receive,transmit}_{bytes,packets}_total{device=...}`) series labelled
+with `name=` and `type="container"`, with no extra LXD config. Measured live on the
+test box: **~0.2-0.3 s and ~65 KB of text per poll**, independent of how many
+containers exist — negligible CPU/RAM overhead even at a 10 s poll interval (well
+under 1% of a core; a few KB of RAM for the rolling history). This directly answered
+the "is it a heavy toll on the host's memory and CPU" question — it isn't.
+
+**Collector (`internal/metrics.Collector`)** mirrors `internal/lxdctl`'s
+`CommandRunner`/`execRunner` shell-out pattern (mockable via a `Runner` in
+`Options`, exercised with a `fakeRunner` in `metrics_test.go`). Every 10 s it:
+1. Runs `lxc query /1.0/metrics` (via the same `lxc-bin`/`--sudo` the rest of the
+   app uses) and parses the Prometheus text with a small regex-based scanner.
+2. Keeps only `type="container"` series, and only the `device="eth0"` network
+   counters — the container's primary NIC — so internal `veth`/`cni`/`flannel`
+   interfaces created by nested k3s aren't double-counted.
+3. Derives **rates** from consecutive cumulative-counter samples:
+   `(cur - prev) / dt`, clamped to ≥ 0 so a counter reset on container restart
+   reports `0` for that interval instead of a bogus negative spike.
+4. Stores six series per container — `cpuPercent`, `memoryPercent`,
+   `netRxBytesPerSec`, `netTxBytesPerSec`, `netRxPacketsPerSec`,
+   `netTxPacketsPerSec` — in small fixed-size ring buffers (360 samples ≈ 1 hour
+   of history at the default interval).
+
+**Wiring.** `httpserver.New` builds the collector and starts `Run(ctx)` in its own
+goroutine. `GET /vsat/{name}/monitoring` renders `web/templates/monitoring.html`
+(both routes sit behind the same session-auth gate as the terminal); the page polls
+`GET /vsat/{name}/monitoring/data` (JSON snapshot) every 10 s and draws each series
+with plain `<canvas>` line+area charts — no charting library vendored, matching the
+"keep the binary self-contained, minimal footprint" approach already used for the
+web terminal (`xterm.js` is the only vendored front-end dependency of substance).
+A container needs two polls (~20 s after creation) before a rate can be derived;
+until then the page shows a "collecting data…" placeholder.
+
 ## Host prerequisites (`scripts/bootstrap-host.sh`)
 
 Ported from the sibling project's `bootstrap-onebox.sh`:

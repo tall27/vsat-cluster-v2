@@ -1,0 +1,144 @@
+{{define "title"}}{{.Name}} monitoring · VSAT Cluster{{end}}
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>📊 {{.Name}}</h1>
+    <p class="muted">CPU, memory and network — updated every 10s</p>
+  </div>
+  <div>
+    <a class="btn btn-ghost" href="/">⤺ Back</a>
+  </div>
+</div>
+
+<div id="metric-grid" class="metric-grid"></div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+(() => {
+  const container = {{.Name}};
+  const grid = document.getElementById('metric-grid');
+
+  // Each entry: [series key in the JSON payload, title, value formatter, line color]
+  const charts = [
+    ['cpuPercent',         'CPU utilization',     v => v.toFixed(1) + ' %',     '#2563eb'],
+    ['memoryPercent',      'Memory utilization',  v => v.toFixed(1) + ' %',     '#7c3aed'],
+    ['netRxBytesPerSec',   'Network in (bytes)',  fmtBytes,                     '#16a34a'],
+    ['netTxBytesPerSec',   'Network out (bytes)', fmtBytes,                     '#dc2626'],
+    ['netRxPacketsPerSec', 'Network in (packets)',v => v.toFixed(1) + ' pkt/s', '#0891b2'],
+    ['netTxPacketsPerSec', 'Network out (packets)',v => v.toFixed(1) + ' pkt/s','#ea580c'],
+  ];
+
+  function fmtBytes(v) {
+    if (v >= 1024 * 1024) return (v / (1024 * 1024)).toFixed(2) + ' MiB/s';
+    if (v >= 1024) return (v / 1024).toFixed(1) + ' KiB/s';
+    return v.toFixed(0) + ' B/s';
+  }
+
+  const cards = {};
+
+  function buildCards() {
+    grid.innerHTML = '';
+    for (const [key, title, fmt, color] of charts) {
+      const card = document.createElement('div');
+      card.className = 'metric-card';
+      card.innerHTML = `
+        <div class="metric-head">
+          <span class="metric-title">${title}</span>
+          <span class="metric-value" data-value>—</span>
+        </div>
+        <canvas data-canvas></canvas>`;
+      grid.appendChild(card);
+      cards[key] = {
+        fmt, color,
+        value: card.querySelector('[data-value]'),
+        canvas: card.querySelector('[data-canvas]'),
+      };
+    }
+  }
+
+  function showWaiting(msg) {
+    grid.innerHTML = `<div class="metric-card"><p class="metric-wait">${msg}</p></div>`;
+  }
+
+  function drawSeries(canvas, points, color) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 260;
+    const h = canvas.clientHeight || 110;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    if (!points || points.length < 2) {
+      ctx.fillStyle = '#9aa3ad';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('collecting data…', 8, h / 2);
+      return;
+    }
+
+    const values = points.map(p => p.value);
+    const minV = Math.min(0, ...values);
+    const maxV = Math.max(...values, minV + 1e-9);
+    const pad = 6;
+    const xStep = (w - pad * 2) / (points.length - 1);
+
+    ctx.beginPath();
+    points.forEach((p, i) => {
+      const x = pad + i * xStep;
+      const y = h - pad - ((p.value - minV) / (maxV - minV)) * (h - pad * 2);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Fill under the line for a CloudWatch-ish look.
+    ctx.lineTo(pad + (points.length - 1) * xStep, h - pad);
+    ctx.lineTo(pad, h - pad);
+    ctx.closePath();
+    ctx.fillStyle = color + '22';
+    ctx.fill();
+  }
+
+  let gotData = false;
+
+  async function poll() {
+    let res;
+    try {
+      res = await fetch(`/vsat/${encodeURIComponent(container)}/monitoring/data`, { cache: 'no-store' });
+    } catch {
+      return;
+    }
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.ready) {
+      if (!gotData) showWaiting('Collecting metrics — charts appear after the first two polls (~20s after the container starts).');
+      return;
+    }
+    if (!gotData) {
+      buildCards();
+      gotData = true;
+    }
+    for (const [key] of charts) {
+      const c = cards[key];
+      const points = data[key] || [];
+      drawSeries(c.canvas, points, c.color);
+      if (points.length) c.value.textContent = c.fmt(points[points.length - 1].value);
+    }
+  }
+
+  showWaiting('Loading…');
+  poll();
+  setInterval(poll, 10000);
+  window.addEventListener('resize', () => {
+    for (const [key] of charts) {
+      const c = cards[key];
+      if (c && c.canvas) drawSeries(c.canvas, null, c.color);
+    }
+    poll();
+  });
+})();
+</script>
+{{end}}

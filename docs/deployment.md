@@ -53,6 +53,25 @@ password on the `/setup` page. After that, `/login` gates everything.
 To use a real certificate instead of self-signed, pass `--tls-cert`/`--tls-key`
 (edit `ExecStart` in the unit) — e.g. a Let's Encrypt pair.
 
+## Viewing per-container monitoring (CPU / memory / network)
+
+Once logged in:
+
+1. On the dashboard, find the container's row.
+2. Click **📊 Monitoring** (next to **⌧ Terminal**).
+3. Or browse straight to `https://<host>/vsat/<container-name>/monitoring`
+   (e.g. `https://18.218.238.174:8443/vsat/vsat-ca-eval-18037625/monitoring`).
+
+The page shows six live charts — CPU utilization %, memory utilization %, network
+in/out in bytes/sec, and network in/out in packets/sec — refreshed every 10 seconds,
+in the same panel-grid layout as AWS CloudWatch's per-instance "Monitoring" tab.
+A freshly-created container shows "collecting data…" for about 20 seconds (two poll
+cycles are needed to derive a rate from LXD's cumulative counters) before the charts
+populate. No extra setup is required — it reads straight from LXD's own
+`lxc query /1.0/metrics` endpoint. See
+[docs/architecture.md](architecture.md#monitoring) for how it's collected and why
+it's safe to leave running continuously (negligible CPU/RAM cost, confirmed live).
+
 ## Running manually (no systemd)
 
 ```bash

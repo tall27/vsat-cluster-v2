@@ -16,6 +16,12 @@ through the host's single public IP.
   4-container cap and the `/dev/kmsg` workaround) or force-delete one.
 - **Web terminal** — a full `xterm.js` terminal streamed over a WebSocket to a host
   PTY running `lxc exec <name> -- bash`. No Guacamole, ttyd or gotty.
+- **Per-container monitoring** — a "📊 Monitoring" page per VSatellite charts CPU,
+  memory and network in/out (bytes + packets), refreshed every 10 s, in the same
+  panel-grid style as the AWS CloudWatch "Monitoring" tab. Polls LXD's own
+  `lxc query /1.0/metrics` Prometheus endpoint — no Netdata/Prometheus/Grafana — and
+  draws with plain `<canvas>`, so nothing new is vendored. See
+  [docs/architecture.md](docs/architecture.md#monitoring).
 - **Auth** — one static password (bcrypt-hashed), HMAC-signed session cookie, HTTPS.
 
 > **Out of scope for this drop:** Route 53 DNS sync. See
@@ -35,6 +41,7 @@ browser ──HTTPS──> vsat-webapp (Go) ──local exec──> lxc / lxc ex
 | `internal/auth` | bcrypt + signed-cookie sessions + middleware |
 | `internal/lxdctl` | `lxc` add/remove/list with the 4-container cap |
 | `internal/webterm` | PTY ⇄ WebSocket bridge (Linux PTY, stub elsewhere) |
+| `internal/metrics` | polls `lxc query /1.0/metrics`, derives per-container CPU/memory/network rates |
 | `internal/httpserver` | routing, config/auth gates, handlers |
 | `internal/selfsign` | in-memory self-signed TLS certificate |
 | `web/` | embedded templates + static assets (htmx, xterm.js) |

@@ -88,3 +88,31 @@ already been created — orphaned without the fix.
   the app creates is guaranteed to get the workaround. Covered by
   `TestAddRetriesKmsgFixUntilContainerReady` and
   `TestAddFailsAfterKmsgRetriesExhausted` in `internal/lxdctl/lxdctl_test.go`.
+
+## Monitoring data-source research (2026-06-07)
+
+The user asked for per-container CPU/memory/network charts similar to AWS
+CloudWatch's "Monitoring" tab, and whether polling for that data would be a heavy
+toll on the host. Verified directly on `18.218.238.174`:
+
+```
+$ time sudo lxc query /1.0/metrics | wc -c
+65431
+real    0m0.241s
+```
+
+`lxc query /1.0/metrics` is LXD's **built-in** Prometheus-format endpoint — no
+extra config, no Netdata/Prometheus/Grafana to install or run. It already exposes,
+per instance (`name=`, `type="container"` labels):
+- `lxd_cpu_seconds_total`, `lxd_cpu_effective_total`
+- `lxd_memory_MemTotal_bytes`, `lxd_memory_MemAvailable_bytes`
+- `lxd_network_{receive,transmit}_{bytes,packets}_total{device=...}`
+- `lxd_disk_*` (not currently charted — CloudWatch screenshot didn't show disk panels)
+
+At ~0.2-0.3 s and ~65 KB of text per call regardless of container count, polling
+this every 10 s costs well under 1% of a core and a few KB of RAM for the rolling
+history — **negligible**, directly answering "let me know if it is a heavy toll on
+host's memory and CPU". This finding is what shaped `internal/metrics.Collector`
+(see [docs/architecture.md](architecture.md#monitoring)): poll locally, derive
+rates from the cumulative counters, keep a small bounded ring buffer per series,
+and render with plain `<canvas>` — no new daemons, no new vendored dependencies.
