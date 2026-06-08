@@ -71,19 +71,22 @@ Packages:
   forced to `TERM=xterm-256color` in `internal/httpserver/server.go` — without it
   `lxc exec` forwards `TERM=unknown` (no terminfo entry) and cursor-addressed TUIs
   like `vsatctl preflight`/`install` fail (see `docs/test-report.md`).
-- `internal/metrics` — `Collector` polls LXD's built-in `lxc query /1.0/metrics`
-  Prometheus endpoint every 10 s (mirrors `lxdctl`'s `CommandRunner`/`execRunner`
-  shell-out + mock-in-tests pattern), parses per-container CPU/memory/`eth0`-network
-  counters, derives rates (`(cur-prev)/dt`, clamped ≥ 0 across counter resets), and
-  keeps six bounded ring-buffer series per container (`cpuPercent`, `memoryPercent`,
-  `net{Rx,Tx}{Bytes,Packets}PerSec`) for the monitoring page. Confirmed live:
-  ~0.2-0.3 s / ~65 KB per poll — negligible overhead, no extra agent needed
-  ("pure vendor functionality first").
+- `internal/metrics` — `Collector` reads the host's `/proc` counters and polls LXD's
+  built-in `lxc query /1.0/metrics` Prometheus endpoint every 5 s (mirrors `lxdctl`'s
+  `CommandRunner`/`execRunner` shell-out + mock-in-tests pattern), parses host and
+  per-container CPU/memory/disk-IO/network counters, derives rates
+  (`(cur-prev)/dt`, clamped ≥ 0 across counter resets — the raw sample is always
+  cached after the *first* poll so the *second* poll is the first to produce
+  numbers), and snapshots one `UtilizationRow` per host/container (host first, then
+  containers by name) for the monitoring table. Confirmed live: ~0.2-0.3 s / ~65 KB
+  per poll — negligible overhead, no extra agent needed ("pure vendor functionality
+  first").
 - `internal/httpserver` — `templates.go` parses one `html/template` set per page
   (layout + partials + page) plus a standalone `containers` fragment for htmx polling.
-  Serves `GET /vsat/{name}/monitoring` (page) + `…/monitoring/data` (JSON snapshot,
-  polled client-side every 10 s and drawn with plain `<canvas>` charts — no new
-  vendored charting lib) alongside the terminal routes, all behind `protected`.
+  Serves `GET /monitoring` (a single host+container utilization table, one row each)
+  + `…/monitoring/data` (JSON snapshot of all rows, polled client-side every 5 s and
+  rendered as plain HTML/CSS bars — no charting lib, icons vendored from Lucide as
+  inline SVG) alongside the terminal routes, all behind `protected`.
 - `web/` — `embed.FS` for `templates/` and `static/`. Front-end libs (htmx, xterm.js,
   addon-fit) are vendored under `web/static/` so the binary is self-contained.
 

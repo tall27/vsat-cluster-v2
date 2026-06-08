@@ -16,12 +16,12 @@ through the host's single public IP.
   4-container cap and the `/dev/kmsg` workaround) or force-delete one.
 - **Web terminal** — a full `xterm.js` terminal streamed over a WebSocket to a host
   PTY running `lxc exec <name> -- bash`. No Guacamole, ttyd or gotty.
-- **Per-container monitoring** — a "📊 Monitoring" page per VSatellite charts CPU,
-  memory and network in/out (bytes + packets), refreshed every 10 s, in the same
-  panel-grid style as the AWS CloudWatch "Monitoring" tab. Polls LXD's own
-  `lxc query /1.0/metrics` Prometheus endpoint — no Netdata/Prometheus/Grafana — and
-  draws with plain `<canvas>`, so nothing new is vendored. See
-  [docs/architecture.md](docs/architecture.md#monitoring).
+- **Monitoring** — a single `/monitoring` table shows host and every VSatellite
+  side by side (CPU, memory, disk I/O, network), refreshed every 5 s, in the spirit
+  of AWS CloudWatch's per-instance "Monitoring" tab. Polls LXD's own
+  `lxc query /1.0/metrics` Prometheus endpoint plus host `/proc` — no
+  Netdata/Prometheus/Grafana — and renders with plain HTML/CSS bars, so nothing new
+  is vendored. See [docs/architecture.md](docs/architecture.md#monitoring).
 - **Auth** — one static password (bcrypt-hashed), HMAC-signed session cookie, HTTPS.
 
 > **Out of scope for this drop:** Route 53 DNS sync. See
