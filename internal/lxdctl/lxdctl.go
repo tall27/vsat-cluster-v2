@@ -21,7 +21,7 @@ import (
 // exec'd into, so a one-shot attempt can race a slow boot and leave the
 // container created but without the fix (vars so tests can zero the delay).
 var (
-	kmsgRetryAttempts = 6
+	kmsgRetryAttempts = 15
 	kmsgRetryDelay    = 2 * time.Second
 )
 
@@ -140,7 +140,8 @@ func (c *Client) List(ctx context.Context) ([]Container, error) {
 }
 
 // Add launches a new container with the configured profile, enforcing the cap.
-// It applies the /dev/kmsg workaround required for nested k3s stability.
+// It applies the /dev/kmsg workaround required for nested k3s stability, and
+// disables the in-container journald watchdog (see comment at the call site).
 func (c *Client) Add(ctx context.Context, name string) error {
 	if err := c.ValidateName(name); err != nil {
 		return err
@@ -165,8 +166,12 @@ func (c *Client) Add(ctx context.Context, name string) error {
 	); err != nil {
 		return fmt.Errorf("lxc launch: %w", err)
 	}
-	// /dev/kmsg workaround inside the container (nested k3s prerequisite).
-	// Retry: the container's init may not be ready to `exec` into yet.
+	// Post-launch fixes inside the container (nested k3s prerequisites), applied
+	// in one exec: /dev/kmsg workaround, and disabling journald's watchdog
+	// (a privileged nested container's heavy k3s/kubelet log volume can stall
+	// journald past its 3-minute watchdog, which SIGABRTs it and triggers an
+	// apport crash-report capture loop — meaningless churn with no real hardware
+	// to protect). Retry: the container's init may not be ready to `exec` into yet.
 	var kmsgErr error
 	for attempt := 0; attempt < kmsgRetryAttempts; attempt++ {
 		if attempt > 0 {
@@ -179,7 +184,11 @@ func (c *Client) Add(ctx context.Context, name string) error {
 		if _, kmsgErr = c.runner.Run(ctx,
 			"exec", name, "--",
 			"bash", "-lc",
-			`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf`,
+			`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && `+
+				`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && `+
+				`mkdir -p /etc/systemd/journald.conf.d && `+
+				`printf '[Journal]\nWatchdogSec=0\n' > /etc/systemd/journald.conf.d/no-watchdog.conf && `+
+				`systemctl restart systemd-journald`,
 		); kmsgErr == nil {
 			return nil
 		}
