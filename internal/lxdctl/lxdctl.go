@@ -145,10 +145,19 @@ func (c *Client) List(ctx context.Context) ([]Container, error) {
 }
 
 // Add launches a new container with the configured profile, enforcing the cap,
-// then applies post-launch fixes/tools (see comment at the call site): the
-// /dev/kmsg workaround required for nested k3s stability, disabling the
-// in-container journald watchdog, and installing k9s.
+// then applies post-launch fixes/tools. Calls Launch then PostLaunch
+// sequentially; use them separately to run PostLaunch in the background.
 func (c *Client) Add(ctx context.Context, name string) error {
+	if err := c.Launch(ctx, name); err != nil {
+		return err
+	}
+	return c.PostLaunch(ctx, name)
+}
+
+// Launch creates and starts the container, returning as soon as lxc launch
+// completes (the container is booting). Call PostLaunch separately to apply
+// in-container fixes and tools without blocking the caller.
+func (c *Client) Launch(ctx context.Context, name string) error {
 	if err := c.ValidateName(name); err != nil {
 		return err
 	}
@@ -172,14 +181,15 @@ func (c *Client) Add(ctx context.Context, name string) error {
 	); err != nil {
 		return fmt.Errorf("lxc launch: %w", err)
 	}
-	// Post-launch fixes/tools inside the container, applied in one exec:
-	//   - /dev/kmsg workaround (nested k3s prerequisite)
-	//   - disabling journald's watchdog (a privileged nested container's heavy
-	//     k3s/kubelet log volume can stall journald past its 3-minute watchdog,
-	//     which SIGABRTs it and triggers an apport crash-report capture loop —
-	//     meaningless churn with no real hardware to protect)
-	//   - installing k9s (pinned version) for in-container cluster inspection
-	// Retry: the container's init may not be ready to `exec` into yet.
+	return nil
+}
+
+// PostLaunch applies in-container fixes and tools after Launch. Safe to call
+// in a goroutine — retries until the container's init is ready for exec.
+//   - /dev/kmsg workaround (nested k3s prerequisite)
+//   - journald watchdog disabled (avoids SIGABRT/apport churn under k3s log volume)
+//   - k9s installed (pinned version) for in-container cluster inspection
+func (c *Client) PostLaunch(ctx context.Context, name string) error {
 	postLaunchCmd := fmt.Sprintf(
 		`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && `+
 			`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && `+
