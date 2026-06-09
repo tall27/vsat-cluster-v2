@@ -203,8 +203,19 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 			// journald: volatile storage (no disk writes/fsyncs), rate-limited,
 			// no compression — eliminates the CPU spike under heavy k3s log volume
 			`mkdir -p /etc/systemd/journald.conf.d && `+
-			`printf '[Journal]\nStorage=volatile\nCompress=no\nRateLimitIntervalSec=30\nRateLimitBurst=200\nSystemMaxUse=32M\nRuntimeMaxUse=32M\nWatchdogSec=0\n' `+
+			`printf '[Journal]\nStorage=volatile\nCompress=no\nRateLimitIntervalSec=30\nRateLimitBurst=200\nSystemMaxUse=32M\nRuntimeMaxUse=32M\n' `+
 			`> /etc/systemd/journald.conf.d/container.conf && `+
+			// the systemd *service* watchdog (default 3min) is separate from the
+			// journald.conf Storage/RateLimit settings above and is NOT controlled
+			// by a [Journal] WatchdogSec directive (not a valid journald.conf key —
+			// it silently does nothing). Under heavy k3s log volume journald can
+			// miss its watchdog ping and gets SIGABRT'd/restarted by systemd every
+			// ~3min, causing the CPU spikes seen on vsat-b/vsat-c. Disable it via
+			// the correct [Service] override.
+			`mkdir -p /etc/systemd/system/systemd-journald.service.d && `+
+			`printf '[Service]\nWatchdogSec=0\n' `+
+			`> /etc/systemd/system/systemd-journald.service.d/override.conf && `+
+			`systemctl daemon-reload && `+
 			`systemctl restart systemd-journald && `+
 			// mask services that waste CPU/RAM inside a k3s container
 			`systemctl mask --now rsyslog cron polkit udisks2 `+
