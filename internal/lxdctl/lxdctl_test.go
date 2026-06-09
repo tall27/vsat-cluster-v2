@@ -189,11 +189,16 @@ func TestEnsureImageCopiesImage(t *testing.T) {
 	if err := c.EnsureImage(context.Background()); err != nil {
 		t.Fatalf("EnsureImage: %v", err)
 	}
-	if len(fr.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(fr.calls))
+	var copyCall []string
+	for _, call := range fr.calls {
+		if strings.Join(call, " ") != "" && call[0] == "image" && len(call) > 1 && call[1] == "copy" {
+			copyCall = call
+		}
 	}
-	joined := strings.Join(fr.calls[0], " ")
-	if !strings.Contains(joined, "image copy ubuntu:24.04 local:") {
+	if copyCall == nil {
+		t.Fatalf("no image copy call found in %v", fr.calls)
+	}
+	if joined := strings.Join(copyCall, " "); !strings.Contains(joined, "image copy ubuntu:24.04 local:") {
 		t.Errorf("unexpected image copy args: %q", joined)
 	}
 }

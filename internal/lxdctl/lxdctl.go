@@ -210,8 +210,12 @@ func (c *Client) Add(ctx context.Context, name string) error {
 }
 
 // EnsureImage pre-caches the configured image in local LXD storage so that
-// subsequent lxc launches don't block on a remote download.
+// subsequent lxc launches don't block on a remote download. Returns nil
+// immediately if the image is already present locally (idempotent).
 func (c *Client) EnsureImage(ctx context.Context) error {
+	if src := c.imageSource(ctx); src != c.Image {
+		return nil // already cached
+	}
 	_, err := c.runner.Run(ctx, "image", "copy", c.Image, "local:", "--copy-aliases", "--auto-update")
 	return err
 }

@@ -106,6 +106,15 @@ func New(opts Options) (*Server, error) {
 		})
 	}
 	go s.metrics.Run(context.Background())
+	// Pre-cache the base image on every startup so imageReady reflects reality
+	// whether or not the user has been through /setup in this process lifetime.
+	go func() {
+		if err := s.lxd.EnsureImage(context.Background()); err != nil {
+			s.logger.Printf("pre-cache image %s: %v", s.lxd.Image, err)
+			return
+		}
+		s.imageReady.Store(true)
+	}()
 	// Load existing config if present.
 	if cfg, err := opts.Store.Load(); err == nil {
 		s.applyConfig(cfg)
