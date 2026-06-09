@@ -43,4 +43,5 @@
   </tbody>
 </table>
 <p class="grid-foot">{{.Used}} / {{.Max}} used · auto-refreshing</p>
+{{if not .ImageReady}}<p class="img-cache-notice">{{template "icon-hourglass" .}} Caching base image — first Add VSAT will be instant once done</p>{{end}}
 {{end}}

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tall27/vsat-cluster-v2/internal/auth"
@@ -31,6 +32,7 @@ type Options struct {
 	SecureCookies bool
 	Logger        *log.Logger
 	Metrics       *metrics.Collector
+	Version       string // build-time git SHA, shown as watermark
 }
 
 // Server holds runtime state and handlers.
@@ -41,8 +43,11 @@ type Server struct {
 	term     *webterm.Handler
 	metrics  *metrics.Collector
 	host     string
+	version  string
 	secureCk bool
 	logger   *log.Logger
+
+	imageReady atomic.Bool
 
 	mu       sync.RWMutex
 	cfg      *config.Config
@@ -64,6 +69,7 @@ func New(opts Options) (*Server, error) {
 		lxd:      opts.LXD,
 		tmpl:     tmpl,
 		host:     opts.Host,
+		version:  opts.Version,
 		secureCk: opts.SecureCookies,
 		logger:   opts.Logger,
 	}

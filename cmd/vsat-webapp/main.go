@@ -17,6 +17,9 @@ import (
 	"github.com/tall27/vsat-cluster-v2/internal/selfsign"
 )
 
+// version is set at build time via -ldflags "-X main.version=<git-sha>".
+var version = "dev"
+
 func main() {
 	var (
 		addr      = flag.String("addr", ":8443", "listen address")
@@ -49,6 +52,7 @@ func main() {
 		Host:          *host,
 		SecureCookies: !*httpOnly,
 		Logger:        logger,
+		Version:       version,
 	})
 	if err != nil {
 		logger.Fatalf("init server: %v", err)
