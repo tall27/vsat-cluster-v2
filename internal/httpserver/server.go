@@ -109,8 +109,13 @@ func New(opts Options) (*Server, error) {
 	// Pre-cache the base image on every startup so imageReady reflects reality
 	// whether or not the user has been through /setup in this process lifetime.
 	go func() {
-		if err := s.lxd.EnsureImage(context.Background()); err != nil {
+		ctx := context.Background()
+		if err := s.lxd.EnsureImage(ctx); err != nil {
 			s.logger.Printf("pre-cache image %s: %v", s.lxd.Image, err)
+			return
+		}
+		if err := s.lxd.WarmPool(ctx); err != nil {
+			s.logger.Printf("warm pool for %s: %v", s.lxd.Image, err)
 			return
 		}
 		s.imageReady.Store(true)

@@ -30,6 +30,12 @@ var (
 // inside the container (rate limits, drift). Bump deliberately when needed.
 const k9sVersion = "v0.51.0"
 
+// warmupContainerName is the throwaway container WarmPool launches and
+// deletes to materialize the per-storage-pool image volume ahead of time.
+// Excluded from List so it never appears in the dashboard or counts toward
+// the container cap.
+const warmupContainerName = "vsat-warmup"
+
 // Container is the trimmed view of an LXD instance the UI needs.
 type Container struct {
 	Name   string `json:"name"`
@@ -191,11 +197,20 @@ func (c *Client) Launch(ctx context.Context, name string) error {
 //   - k9s installed (pinned version) for in-container cluster inspection
 func (c *Client) PostLaunch(ctx context.Context, name string) error {
 	postLaunchCmd := fmt.Sprintf(
+		// kmsg workaround — nested k3s requires /dev/kmsg
 		`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && `+
 			`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && `+
+			// journald: volatile storage (no disk writes/fsyncs), rate-limited,
+			// no compression — eliminates the CPU spike under heavy k3s log volume
 			`mkdir -p /etc/systemd/journald.conf.d && `+
-			`printf '[Journal]\nWatchdogSec=0\n' > /etc/systemd/journald.conf.d/no-watchdog.conf && `+
+			`printf '[Journal]\nStorage=volatile\nCompress=no\nRateLimitIntervalSec=30\nRateLimitBurst=200\nSystemMaxUse=32M\nRuntimeMaxUse=32M\nWatchdogSec=0\n' `+
+			`> /etc/systemd/journald.conf.d/container.conf && `+
 			`systemctl restart systemd-journald && `+
+			// mask services that waste CPU/RAM inside a k3s container
+			`systemctl mask --now rsyslog cron polkit udisks2 `+
+			`ubuntu-advantage unattended-upgrades `+
+			`systemd-timedated systemd-hostnamed console-getty 2>/dev/null || true && `+
+			// k9s — pinned version for in-container cluster inspection
 			`curl -fsSL https://github.com/derailed/k9s/releases/download/%s/k9s_Linux_amd64.tar.gz | tar -xz -C /usr/local/bin k9s && `+
 			`chmod +x /usr/local/bin/k9s`,
 		k9sVersion,
@@ -227,6 +242,24 @@ func (c *Client) EnsureImage(ctx context.Context) error {
 		return nil // already cached
 	}
 	_, err := c.runner.Run(ctx, "image", "copy", c.Image, "local:", "--copy-aliases", "--auto-update")
+	return err
+}
+
+// WarmPool launches and immediately deletes a throwaway container so LXD
+// materializes the per-storage-pool image volume ahead of time. EnsureImage
+// only caches the image into LXD's image store; the unpacked rootfs volume
+// that COW clones are made from is a separate artifact LXD creates lazily on
+// the first lxc launch against a given (image, pool) pair. Without this,
+// the first real Add pays that one-time unpack cost while later Adds just
+// clone the volume this creates.
+func (c *Client) WarmPool(ctx context.Context) error {
+	if _, err := c.runner.Run(ctx,
+		"launch", c.imageSource(ctx), warmupContainerName,
+		"-p", c.Profile,
+	); err != nil {
+		return fmt.Errorf("lxc launch (warmup): %w", err)
+	}
+	_, err := c.runner.Run(ctx, "delete", "--force", warmupContainerName)
 	return err
 }
 
@@ -272,6 +305,9 @@ func parseContainers(data []byte) ([]Container, error) {
 	}
 	out := make([]Container, 0, len(raw))
 	for _, r := range raw {
+		if r.Name == warmupContainerName {
+			continue
+		}
 		out = append(out, Container{
 			Name:   r.Name,
 			Status: r.Status,

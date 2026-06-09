@@ -203,6 +203,45 @@ func TestEnsureImageCopiesImage(t *testing.T) {
 	}
 }
 
+func TestWarmPoolLaunchesAndDeletesThrowaway(t *testing.T) {
+	fr := &fakeRunner{listJSON: `[]`}
+	c := New(Options{Runner: fr, Profile: "vsat-nested", Image: "ubuntu:24.04"})
+	if err := c.WarmPool(context.Background()); err != nil {
+		t.Fatalf("warm pool: %v", err)
+	}
+	var sawLaunch, sawDelete bool
+	for _, call := range fr.calls {
+		joined := strings.Join(call, " ")
+		if strings.HasPrefix(joined, "launch ubuntu:24.04 vsat-warmup") && strings.Contains(joined, "-p vsat-nested") {
+			sawLaunch = true
+		}
+		if joined == "delete --force vsat-warmup" {
+			sawDelete = true
+		}
+	}
+	if !sawLaunch {
+		t.Errorf("expected launch of warmup container, got %v", fr.calls)
+	}
+	if !sawDelete {
+		t.Errorf("expected delete of warmup container, got %v", fr.calls)
+	}
+}
+
+func TestListExcludesWarmupContainer(t *testing.T) {
+	const j = `[
+	  {"name":"vsat-a","status":"Running","state":{"network":{}}},
+	  {"name":"vsat-warmup","status":"Running","state":{"network":{}}}
+	]`
+	c := New(Options{Runner: &fakeRunner{listJSON: j}})
+	got, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "vsat-a" {
+		t.Errorf("expected only vsat-a, got %+v", got)
+	}
+}
+
 func TestShellArgs(t *testing.T) {
 	c := New(Options{})
 	got := strings.Join(c.ShellArgs("vsat-a"), " ")

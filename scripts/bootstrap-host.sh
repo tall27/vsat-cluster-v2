@@ -102,3 +102,11 @@ log "pre-caching container base image ubuntu:24.04 — first 'Add VSAT' will be 
 lxc image copy ubuntu:24.04 local: --copy-aliases --auto-update 2>/dev/null || \
   log "note: image pre-cache skipped (already present or network issue — will retry at app startup)"
 log "base image ready."
+
+# Materialize the per-pool image volume so the first real container doesn't
+# pay the one-time unpack cost (lxc image copy only caches the image store
+# entry, not the unpacked rootfs volume COW clones are made from).
+log "warming '${POOL}' pool with a throwaway container (one-time unpack)..."
+lxc launch local:24.04 vsat-warmup -p vsat-nested >/dev/null 2>&1 && \
+  lxc delete --force vsat-warmup >/dev/null 2>&1 || \
+  log "note: pool warm-up skipped (will retry at app startup)"
