@@ -165,7 +165,7 @@ func (c *Client) Add(ctx context.Context, name string) error {
 		return fmt.Errorf("container limit reached (%d/%d)", len(existing), c.Max)
 	}
 	if _, err := c.runner.Run(ctx,
-		"launch", c.Image, name,
+		"launch", c.imageSource(ctx), name,
 		"-p", c.Profile,
 		"-c", "limits.cpu=2",
 		"-c", "limits.memory=3GiB",
@@ -214,6 +214,25 @@ func (c *Client) Add(ctx context.Context, name string) error {
 func (c *Client) EnsureImage(ctx context.Context) error {
 	_, err := c.runner.Run(ctx, "image", "copy", c.Image, "local:", "--copy-aliases", "--auto-update")
 	return err
+}
+
+// imageSource returns "local:<alias>" when the image is already cached locally,
+// falling back to c.Image (remote) so Add never blocks on a re-download.
+// The local alias is the portion of c.Image after the remote prefix (e.g.
+// "ubuntu:24.04" → "24.04"), which is what --copy-aliases creates.
+func (c *Client) imageSource(ctx context.Context) string {
+	alias := c.Image
+	if i := strings.LastIndex(c.Image, ":"); i >= 0 {
+		alias = c.Image[i+1:]
+	}
+	out, err := c.runner.Run(ctx, "image", "list", "local:"+alias, "--format", "json")
+	if err == nil {
+		var imgs []struct{}
+		if json.Unmarshal(out, &imgs) == nil && len(imgs) > 0 {
+			return "local:" + alias
+		}
+	}
+	return c.Image
 }
 
 // Remove force-deletes a container.
