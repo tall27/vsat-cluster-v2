@@ -18,6 +18,8 @@ type pageData struct {
 	ShowNav bool
 	Host    string
 	Error   string
+	Version    string
+	ImageReady bool
 
 	// dashboard / container fragment
 	Containers    []lxdctl.Container
@@ -37,6 +39,8 @@ func (s *Server) render(w http.ResponseWriter, page string, data pageData) {
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
+	data.Version = s.version
+	data.ImageReady = s.imageReady.Load()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		s.logger.Printf("render %s: %v", page, err)
@@ -84,7 +88,9 @@ func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.lxd.EnsureImage(context.Background()); err != nil {
 			s.logger.Printf("pre-cache image %s: %v", s.lxd.Image, err)
+			return
 		}
+		s.imageReady.Store(true)
 	}()
 	s.sessionManager().Issue(w)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -158,6 +164,8 @@ func (s *Server) handleContainerFragment(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "list error", http.StatusInternalServerError)
 		return
 	}
+	data.Version = s.version
+	data.ImageReady = s.imageReady.Load()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.pages["_containers"].ExecuteTemplate(w, "containers", data); err != nil {
 		s.logger.Printf("render fragment: %v", err)

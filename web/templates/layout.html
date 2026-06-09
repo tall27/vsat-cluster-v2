@@ -25,5 +25,6 @@
     {{block "content" .}}{{end}}
   </main>
   {{block "scripts" .}}{{end}}
+  {{if .Version}}<div class="build-tag">{{.Version}}</div>{{end}}
 </body>
 </html>{{end}}

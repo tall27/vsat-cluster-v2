@@ -130,3 +130,11 @@ body {
 .metric-bar.bar-critical { background: #dc2626; }
 
 .body-terminal .topbar { display: none; }
+
+/* build watermark */
+.build-tag { position: fixed; bottom: 10px; right: 14px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: rgba(0,0,0,0.2); pointer-events: none; z-index: 999; letter-spacing: .3px; }
+.body-terminal .build-tag { color: rgba(255,255,255,0.18); }
+
+/* image-cache notice */
+.img-cache-notice { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin: 8px 4px 0; }
+.img-cache-notice .icon-spin { width: 13px; height: 13px; margin: 0; }

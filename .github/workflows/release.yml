@@ -20,7 +20,7 @@ jobs:
       - run: go test ./...
 
       - name: Build linux/amd64 binary
-        run: GOOS=linux GOARCH=amd64 go build -o out/vsat-webapp ./cmd/vsat-webapp
+        run: GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=$(git rev-parse --short HEAD)" -o out/vsat-webapp ./cmd/vsat-webapp
 
       - name: Package scripts
         run: tar -C . -czf out/scripts.tar.gz scripts
