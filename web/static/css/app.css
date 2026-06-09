@@ -138,3 +138,14 @@ body {
 /* image-cache notice */
 .img-cache-notice { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin: 8px 4px 0; }
 .img-cache-notice .icon-spin { width: 13px; height: 13px; margin: 0; }
+
+/* provision milestone steps */
+.provision-steps { list-style: none; padding: 0; margin: 16px 0 4px; display: flex; flex-direction: column; gap: 10px; }
+.step { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+.step::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+.step-pending { color: var(--muted); }
+.step-active { color: var(--text); }
+.step-active::before { background: var(--primary); animation: step-pulse 1.2s ease-in-out infinite; }
+.step-done { color: var(--on); }
+.step-done::before { background: var(--on); }
+@keyframes step-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,.4); } 50% { box-shadow: 0 0 0 4px rgba(37,99,235,0); } }

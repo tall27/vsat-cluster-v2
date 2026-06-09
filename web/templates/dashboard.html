@@ -26,12 +26,13 @@
 </section>
 
 <dialog id="add-modal" class="modal">
-  <form method="post" action="/containers" class="stack" onsubmit="return startAddVsat()">
-    <div id="add-modal-fields">
+  <form class="stack" onsubmit="vsatAdd(event)">
+    <div id="add-form">
       <h2>Add a VSatellite</h2>
+      <div id="add-error" class="alert alert-error" hidden></div>
       <label class="field">
         <span>Name</span>
-        <input type="text" id="add-modal-name" name="name" value="{{.SuggestedName}}" required
+        <input type="text" id="add-name" name="name" value="{{.SuggestedName}}" required
                pattern="{{.Prefix}}-[a-z0-9-]+" autocomplete="off">
         <small class="muted">must start with <code>{{.Prefix}}-</code></small>
       </label>
@@ -40,19 +41,84 @@
         <button type="submit" class="btn btn-primary">Create</button>
       </div>
     </div>
-    <div id="add-modal-pending" class="stack" hidden>
-      <h2>{{template "icon-hourglass" .}} Creating <span id="add-modal-pending-name" class="mono"></span>&hellip;</h2>
-      <p class="muted">Provisioning the container — this takes a few seconds.</p>
+    <div id="add-progress" hidden>
+      <h2>Adding <span id="add-progress-name" class="mono"></span></h2>
+      <ul class="provision-steps">
+        <li id="ps-launch" class="step">Launching container</li>
+        <li id="ps-boot"   class="step">Starting up</li>
+        <li id="ps-ip"     class="step">Assigning IP address</li>
+      </ul>
     </div>
   </form>
 </dialog>
 <script>
-  function startAddVsat() {
-    document.getElementById('add-modal-pending-name').textContent = document.getElementById('add-modal-name').value;
-    document.getElementById('add-modal-fields').hidden = true;
-    document.getElementById('add-modal-pending').hidden = false;
-    return true;
+(function () {
+  var pollTimer = null;
+
+  function setStep(id, state) {
+    document.getElementById(id).className = 'step step-' + state;
   }
+
+  function showError(msg) {
+    var el = document.getElementById('add-error');
+    el.textContent = msg;
+    el.hidden = false;
+    document.getElementById('add-form').hidden = false;
+    document.getElementById('add-progress').hidden = true;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function pollStatus(name) {
+    pollTimer = setInterval(function () {
+      fetch('/containers/' + encodeURIComponent(name) + '/status')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (c) {
+          if (!c) return;
+          if (c.status === 'Running') setStep('ps-boot', 'done'), setStep('ps-ip', 'active');
+          if (c.ip) {
+            clearInterval(pollTimer); pollTimer = null;
+            setStep('ps-ip', 'done');
+            setTimeout(function () {
+              document.getElementById('add-modal').close();
+              location.reload();
+            }, 500);
+          }
+        })
+        .catch(function () {});
+    }, 2000);
+  }
+
+  window.vsatAdd = function (e) {
+    e.preventDefault();
+    var name = document.getElementById('add-name').value.trim();
+    document.getElementById('add-error').hidden = true;
+    document.getElementById('add-form').hidden = true;
+    document.getElementById('add-progress').hidden = false;
+    document.getElementById('add-progress-name').textContent = name;
+    setStep('ps-launch', 'active');
+    setStep('ps-boot', 'pending');
+    setStep('ps-ip', 'pending');
+
+    fetch('/containers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'name=' + encodeURIComponent(name)
+    })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) { showError(res.d.error || 'Launch failed.'); return; }
+        setStep('ps-launch', 'done');
+        setStep('ps-boot', 'active');
+        pollStatus(name);
+      })
+      .catch(function (err) { showError(err.message); });
+  };
+
+  // Prevent ESC from closing the dialog while provisioning.
+  document.getElementById('add-modal').addEventListener('cancel', function (e) {
+    if (!document.getElementById('add-progress').hidden) e.preventDefault();
+  });
+}());
 </script>
 {{end}}
 

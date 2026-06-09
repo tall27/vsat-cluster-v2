@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -166,16 +167,18 @@ func (s *Server) handleContainerFragment(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
-	if err := s.lxd.Add(r.Context(), name); err != nil {
-		data, berr := s.buildContainerView(r)
-		if berr != nil {
-			data = pageData{ShowNav: true, Host: s.host, Max: s.lxd.Max}
-		}
-		data.Error = "Could not add container: " + err.Error()
-		s.render(w, "dashboard", data)
+	w.Header().Set("Content-Type", "application/json")
+	if err := s.lxd.Launch(r.Context(), name); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	go func() {
+		if err := s.lxd.PostLaunch(context.Background(), name); err != nil {
+			s.logger.Printf("post-launch %s: %v", name, err)
+		}
+	}()
+	json.NewEncoder(w).Encode(map[string]string{"name": name})
 }
 
 func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +196,31 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- terminal ------------------------------------------------------------
+
+func (s *Server) handleContainerStatus(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.lxd.ValidateName(name); err != nil {
+		http.Error(w, "invalid name", http.StatusBadRequest)
+		return
+	}
+	containers, err := s.lxd.List(r.Context())
+	if err != nil {
+		http.Error(w, "list error", http.StatusInternalServerError)
+		return
+	}
+	for _, c := range containers {
+		if c.Name == name {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+				IP     string `json:"ip"`
+			}{c.Name, c.Status, c.IPv4})
+			return
+		}
+	}
+	http.Error(w, "not found", http.StatusNotFound)
+}
 
 func (s *Server) handleTerminalPage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")

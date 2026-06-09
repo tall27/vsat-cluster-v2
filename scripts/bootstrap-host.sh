@@ -54,8 +54,9 @@ COW_SIZE_GB=20
 if ! lxc storage show "${COW_POOL}" >/dev/null 2>&1; then
   AVAIL_GB="$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')"
   if [ "${AVAIL_GB:-0}" -ge $((COW_SIZE_GB + 5)) ]; then
-    log "creating ${COW_SIZE_GB}GB loop-file btrfs pool '${COW_POOL}' for fast copy-on-write container launches"
+    log "creating ${COW_SIZE_GB}GB btrfs COW pool '${COW_POOL}' — allocating loop file, may take ~20 seconds..."
     lxc storage create "${COW_POOL}" btrfs size="${COW_SIZE_GB}GB"
+    log "pool '${COW_POOL}' ready"
   else
     log "skipping COW pool: only ${AVAIL_GB:-?}GB free on / (need $((COW_SIZE_GB + 5))GB+) — containers will use the slower '${POOL}' pool"
   fi
@@ -96,3 +97,8 @@ iptables -t nat -C POSTROUTING -s "${LXD_CIDR}" ! -d "${LXD_CIDR}" -j SNAT --to-
   iptables -t nat -I POSTROUTING 1 -s "${LXD_CIDR}" ! -d "${LXD_CIDR}" -j SNAT --to-source "${PRIMARY_IP}"
 
 log "host bootstrap complete. Next: install the app (see scripts/install.sh)."
+
+log "pre-caching container base image ubuntu:24.04 — first 'Add VSAT' will be instant (~1 min, please wait)..."
+lxc image copy ubuntu:24.04 local: --copy-aliases --auto-update 2>/dev/null || \
+  log "note: image pre-cache skipped (already present or network issue — will retry at app startup)"
+log "base image ready."
