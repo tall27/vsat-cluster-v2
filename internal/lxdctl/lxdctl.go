@@ -209,6 +209,13 @@ func (c *Client) Add(ctx context.Context, name string) error {
 	return fmt.Errorf("lxc exec kmsg fix: %w", kmsgErr)
 }
 
+// EnsureImage pre-caches the configured image in local LXD storage so that
+// subsequent lxc launches don't block on a remote download.
+func (c *Client) EnsureImage(ctx context.Context) error {
+	_, err := c.runner.Run(ctx, "image", "copy", c.Image, "local:", "--copy-aliases", "--auto-update")
+	return err
+}
+
 // Remove force-deletes a container.
 func (c *Client) Remove(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {

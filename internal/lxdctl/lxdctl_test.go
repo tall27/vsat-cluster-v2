@@ -183,6 +183,21 @@ func TestRemoveCallsDeleteForce(t *testing.T) {
 	}
 }
 
+func TestEnsureImageCopiesImage(t *testing.T) {
+	fr := &fakeRunner{}
+	c := New(Options{Runner: fr, Image: "ubuntu:24.04"})
+	if err := c.EnsureImage(context.Background()); err != nil {
+		t.Fatalf("EnsureImage: %v", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(fr.calls))
+	}
+	joined := strings.Join(fr.calls[0], " ")
+	if !strings.Contains(joined, "image copy ubuntu:24.04 local:") {
+		t.Errorf("unexpected image copy args: %q", joined)
+	}
+}
+
 func TestShellArgs(t *testing.T) {
 	c := New(Options{})
 	got := strings.Join(c.ShellArgs("vsat-a"), " ")

@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -80,6 +81,11 @@ func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applyConfig(cfg)
+	go func() {
+		if err := s.lxd.EnsureImage(context.Background()); err != nil {
+			s.logger.Printf("pre-cache image %s: %v", s.lxd.Image, err)
+		}
+	}()
 	s.sessionManager().Issue(w)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
