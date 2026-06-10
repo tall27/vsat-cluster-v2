@@ -250,9 +250,16 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 // in this cluster — lxdbr0 hands out IPv4 only and all NAT is IPv4 — so dropping
 // it removes the eth0 IPv6 link-local address and keeps
 // systemd-networkd-wait-online from ever blocking on IPv6 at boot.
+//
+// Done at the netplan layer (the source of truth on these Ubuntu cloud images):
+// `accept-ra: false` stops Router Advertisements and `link-local: []` (an empty
+// sequence) disables both IPv4 and IPv6 link-local addressing. This merges with
+// the cloud-init-generated dhcp4 config, so IPv4/DHCP is untouched. See
+// https://netplan.readthedocs.io/ ("Properties for all device types").
 func (c *Client) disableIPv6(ctx context.Context, name string) {
-	cmd := `printf 'net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n' ` +
-		`> /etc/sysctl.d/99-disable-ipv6.conf && sysctl --system >/dev/null 2>&1`
+	cmd := `printf 'network:\n  version: 2\n  ethernets:\n    eth0:\n      accept-ra: false\n      link-local: []\n' ` +
+		`> /etc/netplan/99-disable-ipv6.yaml && chmod 600 /etc/netplan/99-disable-ipv6.yaml && ` +
+		`netplan apply`
 	c.runner.Run(ctx, "exec", name, "--", "bash", "-lc", cmd)
 }
 

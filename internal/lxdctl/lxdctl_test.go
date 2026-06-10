@@ -143,7 +143,7 @@ func TestAddDisablesIPv6(t *testing.T) {
 	var sawIPv6 bool
 	for _, call := range fr.calls {
 		joined := strings.Join(call, " ")
-		if call[0] == "exec" && call[1] == "vsat-a" && strings.Contains(joined, "99-disable-ipv6.conf") {
+		if call[0] == "exec" && call[1] == "vsat-a" && strings.Contains(joined, "link-local: []") && strings.Contains(joined, "netplan apply") {
 			sawIPv6 = true
 		}
 	}
