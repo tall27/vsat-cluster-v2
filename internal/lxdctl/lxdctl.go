@@ -218,6 +218,11 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 		`> /etc/systemd/system/systemd-journald.service.d/override.conf && ` +
 		`systemctl daemon-reload && ` +
 		`systemctl restart systemd-journald && ` +
+		// IPv6 is unused in this cluster (lxdbr0 hands out IPv4 only). Disable
+		// it in-container so eth0 carries no IPv6 link-local address and
+		// systemd-networkd-wait-online never blocks on IPv6 configuration.
+		`printf 'net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n' ` +
+		`> /etc/sysctl.d/99-disable-ipv6.conf && sysctl --system >/dev/null 2>&1 ; ` +
 		// mask services that waste CPU/RAM inside a k3s container
 		`systemctl mask --now rsyslog cron polkit udisks2 ` +
 		`ubuntu-advantage unattended-upgrades ` +

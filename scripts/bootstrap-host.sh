@@ -96,6 +96,17 @@ iptables -C FORWARD -o lxdbr0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/
 iptables -t nat -C POSTROUTING -s "${LXD_CIDR}" ! -d "${LXD_CIDR}" -j SNAT --to-source "${PRIMARY_IP}" 2>/dev/null || \
   iptables -t nat -I POSTROUTING 1 -s "${LXD_CIDR}" ! -d "${LXD_CIDR}" -j SNAT --to-source "${PRIMARY_IP}"
 
+# --- disable IPv6 (unused in this cluster) --------------------------------
+# Stop lxdbr0 handing out IPv6, and disable IPv6 on the host. Containers get
+# the matching in-container disable from lxdctl.PostLaunch. Pure IPv4 keeps
+# routing/NAT simple and avoids IPv6 wait-online stalls at container boot.
+log "disabling IPv6 on lxdbr0 and host (IPv4-only cluster)"
+lxc network set lxdbr0 ipv6.address none 2>/dev/null || true
+lxc network set lxdbr0 ipv6.nat false 2>/dev/null || true
+printf 'net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n' \
+  > /etc/sysctl.d/99-disable-ipv6.conf
+sysctl --system >/dev/null 2>&1 || true
+
 log "host bootstrap complete. Next: install the app (see scripts/install.sh)."
 
 log "pre-caching container base image ubuntu:24.04 — first 'Add VSAT' will be instant (~1 min, please wait)..."
