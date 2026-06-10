@@ -134,6 +134,24 @@ func TestAddLaunchesWithProfileAndKmsg(t *testing.T) {
 	}
 }
 
+func TestAddDisablesIPv6(t *testing.T) {
+	fr := &fakeRunner{listJSON: `[]`}
+	c := New(Options{Runner: fr, Max: 4, Profile: "vsat-nested", Image: "ubuntu:24.04"})
+	if err := c.Add(context.Background(), "vsat-a"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	var sawIPv6 bool
+	for _, call := range fr.calls {
+		joined := strings.Join(call, " ")
+		if call[0] == "exec" && call[1] == "vsat-a" && strings.Contains(joined, "99-disable-ipv6.conf") {
+			sawIPv6 = true
+		}
+	}
+	if !sawIPv6 {
+		t.Errorf("expected ipv6 disable exec, got %v", fr.calls)
+	}
+}
+
 func TestAddRetriesKmsgFixUntilContainerReady(t *testing.T) {
 	withZeroKmsgRetryDelay(t)
 	fr := &fakeRunner{listJSON: `[]`, kmsgFailures: 2}
