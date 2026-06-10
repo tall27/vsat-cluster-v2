@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -196,36 +198,31 @@ func (c *Client) Launch(ctx context.Context, name string) error {
 //   - journald watchdog disabled (avoids SIGABRT/apport churn under k3s log volume)
 //   - k9s installed (pinned version) for in-container cluster inspection
 func (c *Client) PostLaunch(ctx context.Context, name string) error {
-	postLaunchCmd := fmt.Sprintf(
+	postLaunchCmd := `printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && ` +
 		// kmsg workaround — nested k3s requires /dev/kmsg
-		`printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && `+
-			`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && `+
-			// journald: volatile storage (no disk writes/fsyncs), rate-limited,
-			// no compression — eliminates the CPU spike under heavy k3s log volume
-			`mkdir -p /etc/systemd/journald.conf.d && `+
-			`printf '[Journal]\nStorage=volatile\nCompress=no\nRateLimitIntervalSec=30\nRateLimitBurst=200\nSystemMaxUse=32M\nRuntimeMaxUse=32M\n' `+
-			`> /etc/systemd/journald.conf.d/container.conf && `+
-			// the systemd *service* watchdog (default 3min) is separate from the
-			// journald.conf Storage/RateLimit settings above and is NOT controlled
-			// by a [Journal] WatchdogSec directive (not a valid journald.conf key —
-			// it silently does nothing). Under heavy k3s log volume journald can
-			// miss its watchdog ping and gets SIGABRT'd/restarted by systemd every
-			// ~3min, causing the CPU spikes seen on vsat-b/vsat-c. Disable it via
-			// the correct [Service] override.
-			`mkdir -p /etc/systemd/system/systemd-journald.service.d && `+
-			`printf '[Service]\nWatchdogSec=0\n' `+
-			`> /etc/systemd/system/systemd-journald.service.d/override.conf && `+
-			`systemctl daemon-reload && `+
-			`systemctl restart systemd-journald && `+
-			// mask services that waste CPU/RAM inside a k3s container
-			`systemctl mask --now rsyslog cron polkit udisks2 `+
-			`ubuntu-advantage unattended-upgrades `+
-			`systemd-timedated systemd-hostnamed console-getty 2>/dev/null || true && `+
-			// k9s — pinned version for in-container cluster inspection
-			`curl -fsSL https://github.com/derailed/k9s/releases/download/%s/k9s_Linux_amd64.tar.gz | tar -xz -C /usr/local/bin k9s && `+
-			`chmod +x /usr/local/bin/k9s`,
-		k9sVersion,
-	)
+		`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && ` +
+		// journald: volatile storage (no disk writes/fsyncs), rate-limited,
+		// no compression — eliminates the CPU spike under heavy k3s log volume
+		`mkdir -p /etc/systemd/journald.conf.d && ` +
+		`printf '[Journal]\nStorage=volatile\nCompress=no\nRateLimitIntervalSec=30\nRateLimitBurst=200\nSystemMaxUse=32M\nRuntimeMaxUse=32M\n' ` +
+		`> /etc/systemd/journald.conf.d/container.conf && ` +
+		// the systemd *service* watchdog (default 3min) is separate from the
+		// journald.conf Storage/RateLimit settings above and is NOT controlled
+		// by a [Journal] WatchdogSec directive (not a valid journald.conf key —
+		// it silently does nothing). Under heavy k3s log volume journald can
+		// miss its watchdog ping and gets SIGABRT'd/restarted by systemd every
+		// ~3min, causing the CPU spikes seen on vsat-b/vsat-c. Disable it via
+		// the correct [Service] override.
+		`mkdir -p /etc/systemd/system/systemd-journald.service.d && ` +
+		`printf '[Service]\nWatchdogSec=0\n' ` +
+		`> /etc/systemd/system/systemd-journald.service.d/override.conf && ` +
+		`systemctl daemon-reload && ` +
+		`systemctl restart systemd-journald && ` +
+		// mask services that waste CPU/RAM inside a k3s container
+		`systemctl mask --now rsyslog cron polkit udisks2 ` +
+		`ubuntu-advantage unattended-upgrades ` +
+		`systemd-timedated systemd-hostnamed console-getty 2>/dev/null || true`
+
 	var kmsgErr error
 	for attempt := 0; attempt < kmsgRetryAttempts; attempt++ {
 		if attempt > 0 {
@@ -239,10 +236,31 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 			"exec", name, "--",
 			"bash", "-lc", postLaunchCmd,
 		); kmsgErr == nil {
-			return nil
+			return c.installK9s(ctx, name)
 		}
 	}
 	return fmt.Errorf("lxc exec kmsg fix: %w", kmsgErr)
+}
+
+// installK9s puts the pinned k9s binary at /usr/local/bin/k9s in the container.
+// Prefers `lxc file push`-ing the host-side cache WarmPool populates — much
+// cheaper than every container curl|tar-ing the release from GitHub, which
+// was found to compete for CPU/network with concurrently-booting containers
+// and slow their DHCP lease acquisition (see docs/test-report.md). Falls back
+// to curl|tar if the cache is missing (e.g. WarmPool hasn't run yet).
+func (c *Client) installK9s(ctx context.Context, name string) error {
+	if cache := k9sCachePath(); fileExists(cache) {
+		if _, err := c.runner.Run(ctx, "file", "push", cache, name+"/usr/local/bin/k9s"); err == nil {
+			_, err := c.runner.Run(ctx, "exec", name, "--", "chmod", "+x", "/usr/local/bin/k9s")
+			return err
+		}
+	}
+	cmd := fmt.Sprintf(
+		`curl -fsSL https://github.com/derailed/k9s/releases/download/%s/k9s_Linux_amd64.tar.gz | tar -xz -C /usr/local/bin k9s && chmod +x /usr/local/bin/k9s`,
+		k9sVersion,
+	)
+	_, err := c.runner.Run(ctx, "exec", name, "--", "bash", "-lc", cmd)
+	return err
 }
 
 // EnsureImage pre-caches the configured image in local LXD storage so that
@@ -270,8 +288,53 @@ func (c *Client) WarmPool(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("lxc launch (warmup): %w", err)
 	}
+	c.cacheK9s(ctx, warmupContainerName)
 	_, err := c.runner.Run(ctx, "delete", "--force", warmupContainerName)
 	return err
+}
+
+// k9sCachePath is the host-side path WarmPool populates and PostLaunch's
+// installK9s reads from, so the pinned k9s release is downloaded once per
+// host instead of once per container.
+func k9sCachePath() string {
+	return filepath.Join(os.TempDir(), "vsat-cluster-cache", "k9s_"+k9sVersion)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// cacheK9s downloads the pinned k9s binary inside the warm-up container and
+// pulls it to the host cache (k9sCachePath) for installK9s to push into real
+// containers. Best-effort: errors are ignored, PostLaunch falls back to
+// curl|tar if the cache ends up missing.
+func (c *Client) cacheK9s(ctx context.Context, container string) {
+	cmd := fmt.Sprintf(
+		`curl -fsSL https://github.com/derailed/k9s/releases/download/%s/k9s_Linux_amd64.tar.gz | tar -xz -C /usr/local/bin k9s`,
+		k9sVersion,
+	)
+	var err error
+	for attempt := 0; attempt < kmsgRetryAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(kmsgRetryDelay):
+			}
+		}
+		if _, err = c.runner.Run(ctx, "exec", container, "--", "bash", "-lc", cmd); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return
+	}
+	cache := k9sCachePath()
+	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
+		return
+	}
+	c.runner.Run(ctx, "file", "pull", container+"/usr/local/bin/k9s", cache)
 }
 
 // imageSource returns "local:<alias>" when the image is already cached locally,
