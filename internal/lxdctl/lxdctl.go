@@ -218,11 +218,6 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 		`> /etc/systemd/system/systemd-journald.service.d/override.conf && ` +
 		`systemctl daemon-reload && ` +
 		`systemctl restart systemd-journald && ` +
-		// IPv6 is unused in this cluster (lxdbr0 hands out IPv4 only). Disable
-		// it in-container so eth0 carries no IPv6 link-local address and
-		// systemd-networkd-wait-online never blocks on IPv6 configuration.
-		`printf 'net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n' ` +
-		`> /etc/sysctl.d/99-disable-ipv6.conf && sysctl --system >/dev/null 2>&1 ; ` +
 		// mask services that waste CPU/RAM inside a k3s container
 		`systemctl mask --now rsyslog cron polkit udisks2 ` +
 		`ubuntu-advantage unattended-upgrades ` +
@@ -241,10 +236,24 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 			"exec", name, "--",
 			"bash", "-lc", postLaunchCmd,
 		); kmsgErr == nil {
+			// Run as separate execs (not chained into postLaunchCmd): the
+			// systemd-journald restart in that chain proved fragile at early
+			// boot and could swallow trailing commands.
+			c.disableIPv6(ctx, name)
 			return c.installK9s(ctx, name)
 		}
 	}
 	return fmt.Errorf("lxc exec kmsg fix: %w", kmsgErr)
+}
+
+// disableIPv6 turns off IPv6 inside the container (best-effort). IPv6 is unused
+// in this cluster — lxdbr0 hands out IPv4 only and all NAT is IPv4 — so dropping
+// it removes the eth0 IPv6 link-local address and keeps
+// systemd-networkd-wait-online from ever blocking on IPv6 at boot.
+func (c *Client) disableIPv6(ctx context.Context, name string) {
+	cmd := `printf 'net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n' ` +
+		`> /etc/sysctl.d/99-disable-ipv6.conf && sysctl --system >/dev/null 2>&1`
+	c.runner.Run(ctx, "exec", name, "--", "bash", "-lc", cmd)
 }
 
 // installK9s puts the pinned k9s binary at /usr/local/bin/k9s in the container.
