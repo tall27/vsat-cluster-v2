@@ -194,34 +194,41 @@ func (c *Client) Launch(ctx context.Context, name string) error {
 
 // PostLaunch applies in-container fixes and tools after Launch. Safe to call
 // in a goroutine — retries until the container's init is ready for exec.
-//   - /dev/kmsg workaround (nested k3s prerequisite)
-//   - journald watchdog disabled (avoids SIGABRT/apport churn under k3s log volume)
-//   - k9s installed (pinned version) for in-container cluster inspection
+//   - /dev/kmsg provided via a oneshot ordered After=journald (nested k3s
+//     prerequisite, without making journald busy-loop — see below)
+//   - journald set to volatile storage + watchdog disabled
+//   - unnecessary services masked, k9s installed, IPv6 disabled
 func (c *Client) PostLaunch(ctx context.Context, name string) error {
-	postLaunchCmd := `printf 'L /dev/kmsg - - - - /dev/console\n' > /etc/tmpfiles.d/kmsg.conf && ` +
-		// kmsg workaround — nested k3s requires /dev/kmsg
-		`systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf && ` +
-		// journald: volatile storage (no disk writes/fsyncs), rate-limited,
-		// no compression — eliminates the CPU spike under heavy k3s log volume
-		`mkdir -p /etc/systemd/journald.conf.d && ` +
+	// Root cause of the per-container CPU spike: nested k3s needs /dev/kmsg, so
+	// the long-standing workaround symlinks it to /dev/console. But
+	// systemd-journald opens /dev/kmsg at startup to import kernel logs;
+	// /dev/console returns EOF immediately while epoll keeps reporting it
+	// readable, so journald busy-loops on read()=0 and pins a whole core
+	// (observed 40-98% per container, host load >17 with three containers).
+	//
+	// Fix: don't create /dev/kmsg via tmpfiles.d (which runs before journald).
+	// Instead provide it from a oneshot unit ordered After=systemd-journald so
+	// journald always starts while /dev/kmsg is still absent (it then never
+	// opens the console and never loops). Apply journald config and restart it
+	// here while /dev/kmsg is absent; k3s still gets its symlink afterwards.
+	// Reboot-safe: on every boot journald starts before the oneshot runs.
+	postLaunchCmd := `mkdir -p /etc/systemd/journald.conf.d && ` +
+		// journald: volatile storage (no disk writes/fsyncs), rate-limited.
 		`printf '[Journal]\nStorage=volatile\nCompress=no\nRateLimitIntervalSec=30\nRateLimitBurst=200\nSystemMaxUse=32M\nRuntimeMaxUse=32M\n' ` +
 		`> /etc/systemd/journald.conf.d/container.conf && ` +
-		// the systemd *service* watchdog (default 3min) is separate from the
-		// journald.conf Storage/RateLimit settings above and is NOT controlled
-		// by a [Journal] WatchdogSec directive (not a valid journald.conf key —
-		// it silently does nothing). Under heavy k3s log volume journald can
-		// miss its watchdog ping and gets SIGABRT'd/restarted by systemd every
-		// ~3min, causing the CPU spikes seen on vsat-b/vsat-c. Disable it via
-		// the correct [Service] override.
+		// belt-and-suspenders: disable the journald service watchdog too.
 		`mkdir -p /etc/systemd/system/systemd-journald.service.d && ` +
 		`printf '[Service]\nWatchdogSec=0\n' ` +
 		`> /etc/systemd/system/systemd-journald.service.d/override.conf && ` +
+		// kmsg provider, ordered After=journald so journald boots kmsg-less.
+		`printf '[Unit]\nDescription=Provide /dev/kmsg for nested k3s\nAfter=systemd-journald.service\n[Service]\nType=oneshot\nExecStart=/bin/ln -sf /dev/console /dev/kmsg\nRemainAfterExit=yes\n[Install]\nWantedBy=sysinit.target\n' ` +
+		`> /etc/systemd/system/vsat-kmsg.service && ` +
+		`rm -f /etc/tmpfiles.d/kmsg.conf && ` +
 		`systemctl daemon-reload && ` +
-		`systemctl restart systemd-journald && ` +
-		// mask services that waste CPU/RAM inside a k3s container
-		`systemctl mask --now rsyslog cron polkit udisks2 ` +
-		`ubuntu-advantage unattended-upgrades ` +
-		`systemd-timedated systemd-hostnamed console-getty 2>/dev/null || true`
+		`systemctl enable vsat-kmsg.service 2>/dev/null ; ` +
+		// restart journald while /dev/kmsg is absent (this must be last — the
+		// restart can swallow trailing chained commands at early boot).
+		`rm -f /dev/kmsg && systemctl restart systemd-journald`
 
 	var kmsgErr error
 	for attempt := 0; attempt < kmsgRetryAttempts; attempt++ {
@@ -236,11 +243,9 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 			"exec", name, "--",
 			"bash", "-lc", postLaunchCmd,
 		); kmsgErr == nil {
-			// Run as separate execs (not chained into postLaunchCmd): the
-			// systemd-journald restart in that chain proved fragile at early
-			// boot and could swallow trailing commands. Install k9s first —
-			// disableIPv6's `netplan apply` briefly reconfigures the network,
-			// which would disrupt the curl-based k9s fallback.
+			// Remaining steps as separate execs: the journald restart above can
+			// swallow trailing chained commands at early boot, so don't chain.
+			c.finalizeContainer(ctx, name) // start kmsg unit + mask services
 			if err := c.installK9s(ctx, name); err != nil {
 				return err
 			}
@@ -249,6 +254,26 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 		}
 	}
 	return fmt.Errorf("lxc exec kmsg fix: %w", kmsgErr)
+}
+
+// finalizeContainer starts the kmsg provider (so /dev/kmsg exists for k3s now,
+// not just on the next boot) and masks services that are useless inside a
+// nested-k3s container — they only burn CPU/RAM and lengthen boot. Best-effort.
+//   - apport: crash reporter (SIGABRT/coredump churn); rsyslog: duplicates the
+//     journal; cron, polkit, udisks2, ModemManager, multipathd, lvm2-monitor,
+//     open-vm-tools, vgauth: no hardware/VMware/LVM in the container; snapd*:
+//     no snaps used; ufw: firewalling is done on the host; unattended-upgrades,
+//     ubuntu-advantage, pollinate, apport, networkd-dispatcher, sysstat: misc.
+func (c *Client) finalizeContainer(ctx context.Context, name string) {
+	cmd := `systemctl start vsat-kmsg.service 2>/dev/null ; ` +
+		`systemctl mask --now ` +
+		`apport rsyslog cron polkit udisks2 ` +
+		`ubuntu-advantage unattended-upgrades pollinate ` +
+		`systemd-timedated systemd-hostnamed console-getty ` +
+		`snapd snapd.socket snapd.seeded snapd.apparmor ` +
+		`ModemManager multipathd lvm2-monitor networkd-dispatcher sysstat ` +
+		`ufw open-vm-tools vgauth 2>/dev/null || true`
+	c.runner.Run(ctx, "exec", name, "--", "bash", "-lc", cmd)
 }
 
 // disableIPv6 turns off IPv6 inside the container (best-effort). IPv6 is unused

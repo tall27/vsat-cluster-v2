@@ -21,7 +21,7 @@ type fakeRunner struct {
 func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, args)
 	joined := strings.Join(args, " ")
-	if f.kmsgFailures > 0 && len(args) > 0 && args[0] == "exec" && strings.Contains(joined, "kmsg") {
+	if f.kmsgFailures > 0 && len(args) > 0 && args[0] == "exec" && strings.Contains(joined, "Storage=volatile") {
 		f.kmsgFailures--
 		return nil, errors.New("container not ready")
 	}
@@ -161,7 +161,7 @@ func TestAddRetriesKmsgFixUntilContainerReady(t *testing.T) {
 	}
 	var kmsgCalls int
 	for _, call := range fr.calls {
-		if call[0] == "exec" && strings.Contains(strings.Join(call, " "), "kmsg") {
+		if call[0] == "exec" && strings.Contains(strings.Join(call, " "), "Storage=volatile") {
 			kmsgCalls++
 		}
 	}
@@ -180,7 +180,7 @@ func TestAddFailsAfterKmsgRetriesExhausted(t *testing.T) {
 	}
 	var kmsgCalls int
 	for _, call := range fr.calls {
-		if call[0] == "exec" && strings.Contains(strings.Join(call, " "), "kmsg") {
+		if call[0] == "exec" && strings.Contains(strings.Join(call, " "), "Storage=volatile") {
 			kmsgCalls++
 		}
 	}
