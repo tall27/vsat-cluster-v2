@@ -238,9 +238,14 @@ func (c *Client) PostLaunch(ctx context.Context, name string) error {
 		); kmsgErr == nil {
 			// Run as separate execs (not chained into postLaunchCmd): the
 			// systemd-journald restart in that chain proved fragile at early
-			// boot and could swallow trailing commands.
+			// boot and could swallow trailing commands. Install k9s first —
+			// disableIPv6's `netplan apply` briefly reconfigures the network,
+			// which would disrupt the curl-based k9s fallback.
+			if err := c.installK9s(ctx, name); err != nil {
+				return err
+			}
 			c.disableIPv6(ctx, name)
-			return c.installK9s(ctx, name)
+			return nil
 		}
 	}
 	return fmt.Errorf("lxc exec kmsg fix: %w", kmsgErr)
