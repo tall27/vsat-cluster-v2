@@ -7,6 +7,10 @@
 #
 # Usage:  sudo ./bootstrap-host.sh [PRIMARY_IP]
 #   PRIMARY_IP  source address for SNAT (default: auto-detected primary IPv4)
+#
+# Optional:
+#   VSAT_COW_DEVICE=/dev/nvme1n1  explicit unformatted block device for the
+#                                 required LXD btrfs COW pool
 set -euo pipefail
 
 log() { printf '[bootstrap] %s\n' "$*"; }
@@ -15,6 +19,34 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "must run as root (use sudo)" >&2
   exit 1
 fi
+
+find_cow_device() {
+  if [ -n "${VSAT_COW_DEVICE:-}" ]; then
+    printf '%s\n' "${VSAT_COW_DEVICE}"
+    return 0
+  fi
+
+  local root_source root_disk name type fstype mountpoint pkname
+  root_source="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+  root_disk="$(lsblk -no PKNAME "${root_source}" 2>/dev/null | head -n1 || true)"
+  [ -z "${root_disk}" ] && root_disk="$(basename "${root_source}")"
+  root_disk="/dev/${root_disk}"
+
+  while read -r name type fstype mountpoint; do
+    [ "${type}" = "disk" ] || continue
+    [ "${name}" != "${root_disk}" ] || continue
+    [ -z "${fstype}" ] || continue
+    [ -z "${mountpoint}" ] || continue
+    if [ -z "$(lsblk -n "${name}" 2>/dev/null | awk 'NR>1 {print; exit}')" ]; then
+      pkname="$(lsblk -no PKNAME "${name}" 2>/dev/null | head -n1 || true)"
+      [ -z "${pkname}" ] || continue
+      printf '%s\n' "${name}"
+      return 0
+    fi
+  done < <(lsblk -dnpo NAME,TYPE,FSTYPE,MOUNTPOINT)
+
+  return 1
+}
 
 PRIMARY_IP="${1:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')}"
 if [ -z "${PRIMARY_IP}" ]; then
@@ -41,32 +73,36 @@ POOL="$(lxc profile device get default root pool 2>/dev/null || true)"
 [ -z "${POOL}" ] && POOL="$(lxc storage list --format csv -c n | head -n1)"
 
 # --- COW storage pool for VSAT containers ---------------------------------
-# `lxd init --auto` defaults to the `dir` driver when there's no spare block
-# device — the common case on a stock cloud instance with a single root disk.
-# `dir` does a full filesystem copy on every `lxc launch`, slow enough that a
-# freshly launched container can miss the /dev/kmsg-fix retry window when
-# containers are created back-to-back (see docs/test-report.md). A loop-file
-# backed btrfs pool gives near-instant copy-on-write clones with no dedicated
-# block device required — confirmed live: exec-ready in ~1s vs. blowing a 12s
-# budget on `dir`, even with 3 containers launched concurrently.
+# `lxd init --auto` defaults to the `dir` driver when there is no storage
+# device configured. `dir` does a full filesystem copy on every `lxc launch`,
+# slow enough that initial VSatellite deployment becomes unreliable when
+# containers are created back-to-back. This project requires a btrfs COW pool
+# backed by a dedicated, unformatted block device such as a secondary gp3 EBS
+# volume.
 COW_POOL="cow"
-COW_SIZE_GB=20
 if ! lxc storage show "${COW_POOL}" >/dev/null 2>&1; then
-  AVAIL_GB="$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')"
-  if [ "${AVAIL_GB:-0}" -ge $((COW_SIZE_GB + 5)) ]; then
-    log "creating ${COW_SIZE_GB}GB btrfs COW pool '${COW_POOL}' — allocating loop file, may take ~20 seconds..."
-    lxc storage create "${COW_POOL}" btrfs size="${COW_SIZE_GB}GB"
-    log "pool '${COW_POOL}' ready"
-  else
-    log "skipping COW pool: only ${AVAIL_GB:-?}GB free on / (need $((COW_SIZE_GB + 5))GB+) — containers will use the slower '${POOL}' pool"
+  if ! COW_DEVICE="$(find_cow_device)"; then
+    cat >&2 <<'EOF'
+no dedicated unformatted block device found for required LXD COW storage
+
+Attach a secondary EBS volume, leave it unformatted, and rerun quickstart.
+To choose the device explicitly, rerun with:
+  sudo VSAT_COW_DEVICE=/dev/nvme1n1 ./bootstrap-host.sh
+EOF
+    exit 1
   fi
+
+  log "creating required btrfs COW pool '${COW_POOL}' on ${COW_DEVICE}"
+  modprobe btrfs 2>/dev/null || true
+  timeout 180s lxc storage create "${COW_POOL}" btrfs source="${COW_DEVICE}"
+  log "pool '${COW_POOL}' ready"
 fi
-lxc storage show "${COW_POOL}" >/dev/null 2>&1 && POOL="${COW_POOL}"
+POOL="${COW_POOL}"
 
 # --- vsat-nested profile --------------------------------------------------
 if ! lxc profile show vsat-nested >/dev/null 2>&1; then
   log "creating vsat-nested profile"
-  lxc profile create vsat-nested
+  lxc profile create vsat-nested </dev/null
 fi
 [ -z "$(lxc profile device get vsat-nested root path 2>/dev/null || true)" ] && \
   lxc profile device add vsat-nested root disk path=/ pool="${POOL}"
