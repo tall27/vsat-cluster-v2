@@ -30,7 +30,7 @@
           Terminal
         </a>
         <form method="post" action="/containers/{{.Name}}/delete" class="inline"
-              onsubmit="return confirm('Delete {{.Name}}? This destroys the container.');">
+              onsubmit="return confirm('Remove {{.Name}}? This uninstalls VSatellite and destroys the container.');">
           <button class="btn btn-small btn-danger" type="submit">
             {{template "icon-trash" .}}
             Remove

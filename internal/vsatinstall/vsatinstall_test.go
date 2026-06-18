@@ -120,3 +120,22 @@ func TestEnsureVSatctlDownloadsToTmpPath(t *testing.T) {
 		t.Fatalf("curl -O saves to cwd and breaks chmod /tmp/vsatctl: %s", script)
 	}
 }
+
+func TestUninstallRunsVSatctlUninstallBeforeRemoval(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := Uninstall(context.Background(), runner, "vsat-a"); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if len(runner.scripts) != 1 {
+		t.Fatalf("expected one uninstall script, got %d", len(runner.scripts))
+	}
+	if !strings.Contains(runner.scripts[0], "test -d /opt/vsatellite") {
+		t.Fatalf("uninstall should skip missing install dir safely: %s", runner.scripts[0])
+	}
+	if !strings.Contains(runner.scripts[0], "curl -fsSLo /tmp/vsatctl https://dl.venafi.cloud/vsatctl") {
+		t.Fatalf("uninstall should download vsatctl to /tmp/vsatctl when needed: %s", runner.scripts[0])
+	}
+	if !strings.Contains(runner.scripts[0], "yes | /tmp/vsatctl uninstall --silent --install-dir /opt/vsatellite") {
+		t.Fatalf("missing vsatctl uninstall command: %s", runner.scripts[0])
+	}
+}

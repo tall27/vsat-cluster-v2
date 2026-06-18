@@ -183,6 +183,28 @@ fi
 	return err
 }
 
+// Uninstall removes an installed VSatellite from a container before the
+// container itself is deleted. Missing install dir is treated as already clean.
+func Uninstall(ctx context.Context, runner Runner, container string) error {
+	if runner == nil {
+		return errors.New("installer runner is required")
+	}
+	container = strings.TrimSpace(container)
+	if container == "" {
+		return errors.New("container is required")
+	}
+	cmd := `if ! test -d /opt/vsatellite; then
+  exit 0
+fi
+if [ ! -x /tmp/vsatctl ]; then
+  curl -fsSLo /tmp/vsatctl https://dl.venafi.cloud/vsatctl
+  chmod +x /tmp/vsatctl
+fi
+yes | /tmp/vsatctl uninstall --silent --install-dir /opt/vsatellite`
+	_, err := runner.Exec(ctx, container, cmd)
+	return err
+}
+
 func installVSatellite(ctx context.Context, runner Runner, container, apiURL, pairingCode string) error {
 	cmd := fmt.Sprintf(
 		"yes | /tmp/vsatctl install --accept-license-agreement --silent --api-url %s --pairing-code %s --install-dir /opt/vsatellite",

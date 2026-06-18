@@ -184,16 +184,28 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if err := s.lxd.ValidateName(name); err != nil {
+		s.renderRemoveError(w, r, "Invalid container name: "+err.Error())
+		return
+	}
+	if err := vsatinstall.Uninstall(r.Context(), s.lxd, name); err != nil {
+		s.renderRemoveError(w, r, "Could not uninstall VSatellite before removing container: "+err.Error())
+		return
+	}
 	if err := s.lxd.Remove(r.Context(), name); err != nil {
-		data, berr := s.buildContainerView(r)
-		if berr != nil {
-			data = pageData{ShowNav: true, Host: s.host, Max: s.lxd.Max}
-		}
-		data.Error = "Could not remove container: " + err.Error()
-		s.render(w, "dashboard", data)
+		s.renderRemoveError(w, r, "Could not remove container: "+err.Error())
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) renderRemoveError(w http.ResponseWriter, r *http.Request, msg string) {
+	data, err := s.buildContainerView(r)
+	if err != nil {
+		data = pageData{ShowNav: true, Host: s.host, Max: s.lxd.Max}
+	}
+	data.Error = msg
+	s.render(w, "dashboard", data)
 }
 
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
