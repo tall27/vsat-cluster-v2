@@ -1,0 +1,252 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Launch a public Ubuntu EC2 host for VSAT Cluster v2 with an 8 GiB gp3 root
+  volume and a newly attached, unformatted gp3 EBS volume for the LXD COW btrfs
+  pool.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network
+        Parameters:
+          - VpcId
+          - SubnetId
+          - SshIngressCidr
+          - HttpsIngressCidr
+      - Label:
+          default: Instance
+        Parameters:
+          - ProjectName
+          - UbuntuAmiId
+          - InstanceType
+          - KeyName
+      - Label:
+          default: Root gp3 volume
+        Parameters:
+          - RootVolumeSizeGiB
+          - RootVolumeIops
+          - RootVolumeThroughput
+      - Label:
+          default: LXD COW gp3 volume
+        Parameters:
+          - CowVolumeSizeGiB
+          - CowVolumeIops
+          - CowVolumeThroughput
+          - CowVolumeDeviceName
+    ParameterLabels:
+      CowVolumeSizeGiB:
+        default: COW volume size GiB
+      HttpsIngressCidr:
+        default: HTTPS ingress CIDR
+      SshIngressCidr:
+        default: SSH ingress CIDR
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: vsat-cluster-v2
+    AllowedPattern: '^[a-zA-Z0-9][a-zA-Z0-9-]{1,62}$'
+    ConstraintDescription: Use 2-63 alphanumeric or hyphen characters, starting with alphanumeric.
+    Description: Value used in Name and Project tags.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the public Ubuntu host security group will be created.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for the Ubuntu host. The instance requests a public IPv4 address.
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair for SSH access as the ubuntu user.
+
+  UbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Public SSM parameter for the Ubuntu AMI ID in this region.
+
+  InstanceType:
+    Type: String
+    Default: t3a.medium
+    AllowedValues:
+      - t3a.medium
+      - t3.medium
+      - t3a.large
+      - t3.large
+      - m6a.large
+      - m7a.large
+    Description: EC2 instance type. The default is sized for a small VSAT Cluster v2 lab host.
+
+  SshIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\/([0-9]|[1-2][0-9]|3[0-2])$'
+    ConstraintDescription: Must be an IPv4 CIDR such as 203.0.113.10/32.
+    Description: Source CIDR allowed to SSH to the host. Use your public IP as /32 when possible.
+
+  HttpsIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\/([0-9]|[1-2][0-9]|3[0-2])$'
+    ConstraintDescription: Must be an IPv4 CIDR such as 0.0.0.0/0.
+    Description: Source CIDR allowed to reach the VSAT Cluster v2 HTTPS UI on port 443.
+
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: 8
+    MinValue: 8
+    MaxValue: 16384
+    Description: Size of the root gp3 EBS volume in GiB.
+
+  RootVolumeIops:
+    Type: Number
+    Default: 3000
+    MinValue: 3000
+    MaxValue: 16000
+    Description: Provisioned IOPS for the root gp3 EBS volume.
+
+  RootVolumeThroughput:
+    Type: Number
+    Default: 125
+    MinValue: 125
+    MaxValue: 1000
+    Description: Provisioned throughput in MiB/s for the root gp3 EBS volume.
+
+  CowVolumeSizeGiB:
+    Type: Number
+    Default: 40
+    MinValue: 1
+    MaxValue: 16384
+    Description: Size of the unformatted gp3 EBS volume intended for the LXD COW btrfs pool.
+
+  CowVolumeIops:
+    Type: Number
+    Default: 3000
+    MinValue: 3000
+    MaxValue: 16000
+    Description: Provisioned IOPS for the LXD COW gp3 EBS volume.
+
+  CowVolumeThroughput:
+    Type: Number
+    Default: 125
+    MinValue: 125
+    MaxValue: 1000
+    Description: Provisioned throughput in MiB/s for the LXD COW gp3 EBS volume.
+
+  CowVolumeDeviceName:
+    Type: String
+    Default: /dev/sdf
+    AllowedPattern: '^/dev/sd[f-p]$'
+    ConstraintDescription: Use a Linux EBS device name from /dev/sdf through /dev/sdp.
+    Description: Requested attachment device name for the raw COW volume.
+
+Resources:
+  VsatSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VSAT Cluster v2 public access
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshIngressCidr
+          Description: Allow SSH access to Ubuntu
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref HttpsIngressCidr
+          Description: Allow HTTPS access to VSAT Cluster v2
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: AllowFromEverywhere
+          Value: 'yes'
+
+  VsatInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref UbuntuAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref RootVolumeSizeGiB
+            Iops: !Ref RootVolumeIops
+            Throughput: !Ref RootVolumeThroughput
+            DeleteOnTermination: true
+            Encrypted: true
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref VsatSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ubuntu'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Role
+          Value: vsat-cluster-host
+
+  CowVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !GetAtt VsatInstance.AvailabilityZone
+      VolumeType: gp3
+      Size: !Ref CowVolumeSizeGiB
+      Iops: !Ref CowVolumeIops
+      Throughput: !Ref CowVolumeThroughput
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-lxd-cow'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: vsat-lxd-cow
+        - Key: Filesystem
+          Value: unformatted
+
+  CowVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: !Ref CowVolumeDeviceName
+      InstanceId: !Ref VsatInstance
+      VolumeId: !Ref CowVolume
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance ID for the VSAT Cluster v2 host.
+    Value: !Ref VsatInstance
+
+  PublicIp:
+    Description: Public IPv4 address assigned to the instance.
+    Value: !GetAtt VsatInstance.PublicIp
+
+  PublicDnsName:
+    Description: Public DNS name assigned to the instance.
+    Value: !GetAtt VsatInstance.PublicDnsName
+
+  CowVolumeId:
+    Description: EBS volume ID for the attached, unformatted LXD COW volume.
+    Value: !Ref CowVolume
+
+  SecurityGroupId:
+    Description: Security group ID attached to the instance.
+    Value: !Ref VsatSecurityGroup
+
+  QuickstartCommand:
+    Description: Command to run on the instance after connecting over SSH.
+    Value: curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo bash
