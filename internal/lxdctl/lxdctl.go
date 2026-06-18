@@ -423,6 +423,14 @@ func (c *Client) ShellArgs(name string) []string {
 	return []string{"exec", name, "--", "bash", "-l"}
 }
 
+// Exec runs a non-interactive shell command inside a managed container.
+func (c *Client) Exec(ctx context.Context, name, script string) ([]byte, error) {
+	if err := c.ValidateName(name); err != nil {
+		return nil, err
+	}
+	return c.runner.Run(ctx, "exec", name, "--", "bash", "-lc", script)
+}
+
 func parseContainers(data []byte) ([]Container, error) {
 	var raw []rawContainer
 	if err := json.Unmarshal(data, &raw); err != nil {

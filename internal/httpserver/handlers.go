@@ -11,13 +11,14 @@ import (
 	"github.com/tall27/vsat-cluster-v2/internal/auth"
 	"github.com/tall27/vsat-cluster-v2/internal/config"
 	"github.com/tall27/vsat-cluster-v2/internal/lxdctl"
+	"github.com/tall27/vsat-cluster-v2/internal/vsatinstall"
 )
 
 // pageData is the unified view model passed to templates.
 type pageData struct {
-	ShowNav bool
-	Host    string
-	Error   string
+	ShowNav    bool
+	Host       string
+	Error      string
 	Version    string
 	ImageReady bool
 
@@ -193,6 +194,52 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.lxd.ValidateName(name); err != nil {
+		writeInstallJSON(w, http.StatusBadRequest, "error", "Invalid install request.")
+		return
+	}
+	protocol := strings.TrimSpace(r.FormValue("protocol"))
+	if protocol == "" {
+		protocol = "ccm"
+	}
+	if protocol != "ccm" {
+		writeInstallJSON(w, http.StatusBadRequest, "error", "NGTS install is not available yet.")
+		return
+	}
+	result, err := vsatinstall.InstallCCM(r.Context(), vsatinstall.InstallOpts{
+		Container:      name,
+		Protocol:       protocol,
+		APIEndpointURL: r.FormValue("api_endpoint_url"),
+		APIKey:         r.FormValue("api_key"),
+		Runner:         s.lxd,
+	})
+	if err != nil {
+		s.logger.Printf("install %s: %v", name, err)
+		writeInstallJSON(w, http.StatusBadRequest, "error", sanitizeInstallError(err))
+		return
+	}
+	writeInstallJSON(w, http.StatusOK, "ok", result.EdgeStatus)
+}
+
+func writeInstallJSON(w http.ResponseWriter, code int, status, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  status,
+		"message": message,
+	})
+}
+
+func sanitizeInstallError(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "Install failed."
+	}
+	return msg
 }
 
 // --- terminal ------------------------------------------------------------

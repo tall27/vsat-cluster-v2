@@ -167,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /partials/containers", s.protected(http.HandlerFunc(s.handleContainerFragment)))
 	mux.Handle("POST /containers", s.protected(http.HandlerFunc(s.handleAdd)))
 	mux.Handle("GET /containers/{name}/status", s.protected(http.HandlerFunc(s.handleContainerStatus)))
+	mux.Handle("POST /containers/{name}/install", s.protected(http.HandlerFunc(s.handleInstall)))
 	mux.Handle("POST /containers/{name}/delete", s.protected(http.HandlerFunc(s.handleRemove)))
 	mux.Handle("GET /vsat/{name}/terminal", s.protected(http.HandlerFunc(s.handleTerminalPage)))
 	mux.Handle("GET /vsat/{name}/terminal/ws", s.protected(http.HandlerFunc(s.handleTerminalWS)))

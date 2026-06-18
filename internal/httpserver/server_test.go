@@ -155,6 +155,23 @@ func TestMonitoringDataRequiresSession(t *testing.T) {
 	}
 }
 
+func TestInstallRequiresAPIKey(t *testing.T) {
+	srv := newTestServer(t, nil)
+	cookies := setupSessionRequest(t, srv)
+	req := postForm("/containers/vsat-a/install", url.Values{"protocol": {"ccm"}})
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "API key is required") {
+		t.Fatalf("expected API key error, got %q", rec.Body.String())
+	}
+}
+
 func TestMonitoringDataReturnsHostAndContainerRows(t *testing.T) {
 	c := metrics.NewCollector(metrics.Options{
 		ListFn: func(_ context.Context) ([]metrics.ContainerInfo, error) {

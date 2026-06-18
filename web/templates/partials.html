@@ -8,6 +8,7 @@
 {{define "icon-network"}}<svg class="icon icon-metric" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>{{end}}
 {{define "icon-host"}}<svg class="icon icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>{{end}}
 {{define "icon-container"}}<svg class="icon icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>{{end}}
+{{define "icon-install"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{{end}}
 
 {{define "containers"}}
 <table class="grid">
@@ -35,8 +36,56 @@
             Remove
           </button>
         </form>
+        {{if eq .Status "Running"}}
+        <button type="button" class="btn btn-small btn-install" id="install-btn-{{.Name}}"
+                data-vsat="{{.Name}}" data-state="ready" onclick="toggleInstall('{{.Name}}')">
+          <span class="btn-install-icon-ready">{{template "icon-install" .}}</span>
+          <span class="btn-install-icon-busy">{{template "icon-hourglass" .}}</span>
+          <span class="btn-install-label">Install</span>
+        </button>
+        {{end}}
       </td>
     </tr>
+    {{if eq .Status "Running"}}
+    <tr class="install-row" id="install-row-{{.Name}}">
+      <td colspan="4" class="install-cell">
+        <div class="install-collapse" id="install-collapse-{{.Name}}">
+          <div class="install-panel">
+            <form class="install-panel-inner" method="post" action="/containers/{{.Name}}/install" onsubmit="return confirmInstall(event, '{{.Name}}')">
+              <input type="hidden" name="protocol" value="ccm">
+              <div class="install-protocols">
+                <label class="radio-row">
+                  <input type="radio" name="install-protocol-{{.Name}}" value="ccm" checked
+                         onchange="updateInstallProtocol('{{.Name}}')">
+                  CCM Protocol
+                </label>
+                <label class="radio-row">
+                  <input type="radio" name="install-protocol-{{.Name}}" value="ngts"
+                         onchange="updateInstallProtocol('{{.Name}}')">
+                  NGTS System
+                </label>
+              </div>
+              <div class="install-fields">
+                <input type="text" class="install-url" name="api_endpoint_url" placeholder="Customer Tenant URL" autocomplete="off" hidden>
+                <div class="install-creds">
+                  <input type="text" class="install-cred-single" name="api_key" placeholder="API Key" autocomplete="off" required>
+                  <div class="install-cred-split" hidden>
+                    <input type="text" name="tenant_id" placeholder="Tenant ID" autocomplete="off">
+                    <input type="text" name="secret_key_signature" placeholder="Secret Key Signature" autocomplete="off">
+                  </div>
+                </div>
+                <div class="install-error alert alert-error" hidden></div>
+              </div>
+              <div class="install-actions">
+                <button type="button" class="btn btn-ghost btn-small" onclick="toggleInstall('{{.Name}}')">Cancel</button>
+                <button type="submit" class="btn btn-primary btn-small">Confirm</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </td>
+    </tr>
+    {{end}}
     {{else}}
     <tr><td colspan="4" class="empty">No containers yet. Add one to get started.</td></tr>
     {{end}}

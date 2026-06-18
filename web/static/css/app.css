@@ -76,6 +76,54 @@ body {
 .dot-on { background: var(--on); }
 .dot-off { background: var(--off); }
 
+/* install action button */
+.btn-install { color: var(--on); border-color: #bbf7d0; }
+.btn-install:hover:not(:disabled) { background: #ecfdf5; border-color: #86efac; }
+.btn-install:disabled { cursor: not-allowed; opacity: .7; }
+.btn-install .btn-install-icon-busy { display: none; }
+.btn-install[data-state="installing"] .btn-install-icon-ready { display: none; }
+.btn-install[data-state="installing"] .btn-install-icon-busy { display: inline-flex; }
+
+/* inline install row */
+.install-row td { padding: 0; border-bottom: none; }
+.install-cell { background: #fbfcfe; }
+.install-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .16s ease;
+}
+.install-collapse.open { grid-template-rows: 1fr; }
+.install-collapse > .install-panel { overflow: hidden; }
+.install-panel-inner {
+  display: grid;
+  grid-template-columns: 180px 1fr auto;
+  align-items: start;
+  gap: 14px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.install-protocols { display: flex; flex-direction: column; gap: 8px; }
+.radio-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.install-fields { display: flex; flex-direction: column; gap: 8px; }
+.install-fields input,
+.install-creds input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  font-size: 14px;
+}
+.install-fields input:focus,
+.install-creds input:focus { outline: none; border-bottom-color: var(--primary); }
+.install-cred-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.install-cred-split[hidden],
+.install-cred-single[hidden],
+.install-url[hidden],
+.install-error[hidden] { display: none; }
+.install-error { margin: 4px 0 0; }
+.install-actions { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
+
 /* alerts */
 .alert { border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
 .alert-error { background: #fdeaea; color: #991b1b; border: 1px solid #f3c3c3; }

@@ -20,10 +20,119 @@
 {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
 
 <section class="card">
-  <div id="container-grid" hx-get="/partials/containers" hx-trigger="every 5s" hx-swap="innerHTML">
+  <div id="container-grid" hx-get="/partials/containers" hx-trigger="every 5s [installPanelsClosed()]" hx-swap="innerHTML">
     {{template "containers" .}}
   </div>
 </section>
+
+<script>
+  var installState = {};
+  var installOpen = new Set();
+
+  function installPanelsClosed() { return installOpen.size === 0; }
+
+  function applyInstallState() {
+    document.querySelectorAll('.btn-install').forEach(function (btn) {
+      var name = btn.dataset.vsat;
+      var state = installState[name] || 'ready';
+      btn.dataset.state = state;
+      btn.disabled = state === 'installing' || state === 'running';
+      btn.querySelector('.btn-install-label').textContent = state === 'installing' ? 'Installing...' : (state === 'running' ? 'Running' : 'Install');
+    });
+    installOpen.forEach(function (name) {
+      var collapse = document.getElementById('install-collapse-' + name);
+      if (collapse) collapse.classList.add('open');
+    });
+  }
+
+  document.body.addEventListener('htmx:afterSwap', applyInstallState);
+
+  function toggleInstall(name) {
+    var btn = document.getElementById('install-btn-' + name);
+    if (btn && btn.dataset.state === 'installing') return;
+    var collapse = document.getElementById('install-collapse-' + name);
+    if (!collapse) return;
+    if (installOpen.has(name)) {
+      installOpen.delete(name);
+      collapse.classList.remove('open');
+    } else {
+      installOpen.add(name);
+      collapse.classList.add('open');
+    }
+  }
+
+  function updateInstallProtocol(name) {
+    var collapse = document.getElementById('install-collapse-' + name);
+    if (!collapse) return;
+    var protocol = collapse.querySelector('input[name="install-protocol-' + name + '"]:checked').value;
+    var hiddenProtocol = collapse.querySelector('input[name="protocol"]');
+    var url = collapse.querySelector('.install-url');
+    var single = collapse.querySelector('.install-cred-single');
+    var split = collapse.querySelector('.install-cred-split');
+    var splitInputs = split.querySelectorAll('input');
+    if (hiddenProtocol) hiddenProtocol.value = protocol;
+    if (protocol === 'ngts') {
+      url.placeholder = 'Customer Tenant URL';
+      url.hidden = false;
+      url.required = true;
+      single.hidden = true;
+      single.required = false;
+      split.hidden = false;
+      splitInputs.forEach(function (i) { i.required = true; });
+    } else {
+      url.placeholder = 'Customer Tenant URL';
+      url.hidden = true;
+      url.required = false;
+      single.hidden = false;
+      single.required = true;
+      split.hidden = true;
+      splitInputs.forEach(function (i) { i.required = false; });
+    }
+  }
+
+  function confirmInstall(event, name) {
+    event.preventDefault();
+    var form = event.target;
+    var collapse = document.getElementById('install-collapse-' + name);
+    updateInstallProtocol(name);
+    var errorBox = collapse ? collapse.querySelector('.install-error') : null;
+    if (errorBox) {
+      errorBox.hidden = true;
+      errorBox.textContent = '';
+    }
+    var formData = new FormData(form);
+    installState[name] = 'installing';
+    applyInstallState();
+    fetch(form.action, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin'
+    }).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok || payload.status !== 'ok') {
+          throw new Error(payload.message || 'Install failed.');
+        }
+        return payload;
+      });
+    }).then(function () {
+      installOpen.delete(name);
+      if (collapse) collapse.classList.remove('open');
+      installState[name] = 'running';
+      applyInstallState();
+      if (window.htmx) window.htmx.ajax('GET', '/partials/containers', { target: '#container-grid', swap: 'innerHTML' });
+    }).catch(function (err) {
+      installState[name] = 'ready';
+      installOpen.add(name);
+      if (collapse) collapse.classList.add('open');
+      if (errorBox) {
+        errorBox.textContent = err.message || 'Install failed.';
+        errorBox.hidden = false;
+      }
+      applyInstallState();
+    });
+    return false;
+  }
+</script>
 
 <dialog id="add-modal" class="modal">
   <form class="stack" onsubmit="vsatAdd(event)">
