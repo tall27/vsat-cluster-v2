@@ -114,6 +114,8 @@ Packages:
 
 ## CI / deployment
 
+- For AWS CLI work in this project, always include
+  `--profile Venafi-SE-Basic-Access-427380916706`.
 - `scripts/bootstrap-host.sh` — idempotent host prep (LXD, COW pool, profile, NAT, autostart).
 - `scripts/install.sh` + `scripts/vsat-webapp.service` — install binary + systemd unit.
 - No GitHub Actions workflow yet; `go test ./...` and linux/amd64 cross-build are

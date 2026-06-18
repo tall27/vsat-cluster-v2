@@ -61,6 +61,12 @@ embedded into the binary, so the single artifact is fully self-contained.
 
 ## Deploy (on the Linux host)
 
+For AWS-side operations on this project, use the Venafi SE Basic Access profile:
+
+```bash
+aws <service> <operation> --profile Venafi-SE-Basic-Access-427380916706
+```
+
 ```bash
 # 1. Prepare a fresh host: installs LXD, the vsat-nested profile and NAT.
 sudo ./scripts/bootstrap-host.sh

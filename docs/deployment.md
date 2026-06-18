@@ -2,6 +2,18 @@
 
 The app runs on the Linux host it manages. Target: Ubuntu 24.04/26.04 with LXD.
 
+For any AWS CLI work related to this project, use:
+
+```bash
+--profile Venafi-SE-Basic-Access-427380916706
+```
+
+For example:
+
+```bash
+aws ec2 describe-instances --profile Venafi-SE-Basic-Access-427380916706
+```
+
 ## Quick start (recommended)
 
 On a fresh host, as root:
