@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: VSAT Cluster v2 EC2 workload stack with raw gp3 COW volume and quickstart UserData.
+Description: VSAT Cluster v2 EC2 workload stack with gp3 COW block device and quickstart UserData.
 
 Parameters:
   CustomerName:
     Type: String
   InstanceType:
     Type: String
-    Default: t3a.medium
+    Default: t3a.xlarge
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
   SubnetId:
@@ -42,6 +42,14 @@ Resources:
           Ebs:
             VolumeSize: !Ref RootVolumeSizeGiB
             VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+        - DeviceName: /dev/sdf
+          Ebs:
+            VolumeSize: !Ref CowVolumeSizeGiB
+            VolumeType: gp3
+            Iops: !Ref CowVolumeIops
+            Throughput: !Ref CowVolumeThroughput
             DeleteOnTermination: true
             Encrypted: true
       NetworkInterfaces:
@@ -87,32 +95,6 @@ Resources:
         - Key: Role
           Value: vsat-cluster-host
 
-  CowVolume:
-    Type: AWS::EC2::Volume
-    Properties:
-      AvailabilityZone: !GetAtt VsatInstance.AvailabilityZone
-      VolumeType: gp3
-      Size: !Ref CowVolumeSizeGiB
-      Iops: !Ref CowVolumeIops
-      Throughput: !Ref CowVolumeThroughput
-      Encrypted: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${CustomerName}-lxd-cow'
-        - Key: CustomerName
-          Value: !Ref CustomerName
-        - Key: Purpose
-          Value: vsat-lxd-cow
-        - Key: Filesystem
-          Value: unformatted
-
-  CowVolumeAttachment:
-    Type: AWS::EC2::VolumeAttachment
-    Properties:
-      Device: /dev/sdf
-      InstanceId: !Ref VsatInstance
-      VolumeId: !Ref CowVolume
-
 Outputs:
   InstanceId:
     Value: !Ref VsatInstance
@@ -120,5 +102,3 @@ Outputs:
     Value: !GetAtt VsatInstance.PublicIp
   PublicDnsName:
     Value: !GetAtt VsatInstance.PublicDnsName
-  CowVolumeId:
-    Value: !Ref CowVolume

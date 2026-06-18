@@ -9,12 +9,13 @@ The current stack follows the `onebox.v2` nested-stack pattern:
   `s3://akush/vsat-cluster/`
 - `vpcstack.yaml` - fresh VPC, public subnet, internet gateway, route table
 - `sgstack.yaml` - SSH from `AdminCidr`, public HTTPS, internal VPC traffic
-- `vsatstack.yaml` - Ubuntu EC2 instance, 8 GiB root, raw gp3 COW volume, and
-  UserData quickstart
+- `vsatstack.yaml` - Ubuntu EC2 instance, 8 GiB root, gp3 COW block device
+  with delete-on-termination enabled, and UserData quickstart
 - `vsat-ubuntu-ec2.yaml` - older standalone template kept for reference
 
-The workload stack launches Ubuntu 24.04, attaches a separate raw gp3 EBS volume,
-and runs this UserData command after `/dev/nvme1n1` appears:
+The workload stack launches Ubuntu 24.04, creates the COW gp3 EBS volume as an
+EC2 block device with delete-on-termination enabled, and runs this UserData
+command after `/dev/nvme1n1` appears:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo VSAT_COW_DEVICE=/dev/nvme1n1 bash
@@ -50,7 +51,7 @@ aws cloudformation create-stack \
     ParameterKey=CustomerName,ParameterValue=vsat-cow-<suffix> \
     ParameterKey=AdminCidr,ParameterValue=<your-public-ip>/32 \
     ParameterKey=KeyName,ParameterValue=talk-vnfi-Ohio \
-    ParameterKey=InstanceType,ParameterValue=t3a.medium \
+    ParameterKey=InstanceType,ParameterValue=t3a.xlarge \
     ParameterKey=RootVolumeSizeGiB,ParameterValue=8 \
     ParameterKey=CowVolumeSizeGiB,ParameterValue=40 \
     ParameterKey=CowVolumeIops,ParameterValue=3000 \

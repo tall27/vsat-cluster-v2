@@ -44,7 +44,7 @@ Parameters:
   InstanceType:
     Type: String
     Description: EC2 instance type for the VSAT Cluster host.
-    Default: t3a.medium
+    Default: t3a.xlarge
 
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
@@ -118,9 +118,6 @@ Outputs:
   PublicDnsName:
     Description: Public DNS name.
     Value: !GetAtt VsatStack.Outputs.PublicDnsName
-  CowVolumeId:
-    Description: Raw gp3 COW volume ID.
-    Value: !GetAtt VsatStack.Outputs.CowVolumeId
   SshCommand:
     Description: SSH command for the host.
     Value: !Sub

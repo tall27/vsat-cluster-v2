@@ -49,12 +49,14 @@ type InstallResult struct {
 }
 
 type edgeInstance struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	EdgeStatus    string `json:"edgeStatus"`
-	PairingCode   string `json:"pairingCode"`
-	Environment   string `json:"environmentId"`
-	EnvironmentID string `json:"environmentID"`
+	ID                       string `json:"id"`
+	Name                     string `json:"name"`
+	EdgeStatus               string `json:"edgeStatus"`
+	PairingCode              string `json:"pairingCode"`
+	PairingCodeID            string `json:"pairingCodeId"`
+	Environment              string `json:"environmentId"`
+	EnvironmentID            string `json:"environmentID"`
+	IntegrationServicesCount int    `json:"integrationServicesCount"`
 }
 
 // InstallCCM creates a pairing code from the CCM API and runs vsatctl install
@@ -79,21 +81,24 @@ func InstallCCM(ctx context.Context, opts InstallOpts) (*InstallResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := deleteStaleEdgeInstances(ctx, client, base, apiKey, container); err != nil {
+	if err := deleteStaleEdgeInstances(ctx, client, base, apiKey, environmentID); err != nil {
 		return nil, err
 	}
-	pairingCode, err := createPairingCode(ctx, client, base, apiKey, environmentID)
+	pairingCode, pairingCodeID, err := createPairingCode(ctx, client, base, apiKey, environmentID)
 	if err != nil {
 		return nil, err
 	}
 	if err := ensureVSatctl(ctx, opts.Runner, container); err != nil {
 		return nil, err
 	}
-	if err := installVSatellite(ctx, opts.Runner, container, base, pairingCode); err != nil {
+	if err := installVSatellite(ctx, opts.Runner, container, strings.TrimRight(base, "/"), pairingCode); err != nil {
 		return nil, err
 	}
-	status, err := pollActive(ctx, client, base, apiKey, container, opts.PollInterval, opts.PollTimeout)
+	status, err := pollActive(ctx, client, base, apiKey, pairingCodeID, opts.PollInterval, opts.PollTimeout)
 	if err != nil {
+		return nil, err
+	}
+	if err := renameEdgeInstance(ctx, client, base, apiKey, pairingCodeID, container); err != nil {
 		return nil, err
 	}
 	return &InstallResult{PairingCode: pairingCode, EdgeStatus: status}, nil
@@ -140,7 +145,7 @@ func decodeEnvironmentID(ctx context.Context, client *http.Client, base, apiKey 
 	return payload.Environments[0].ID, nil
 }
 
-func createPairingCode(ctx context.Context, client *http.Client, base, apiKey, environmentID string) (string, error) {
+func createPairingCode(ctx context.Context, client *http.Client, base, apiKey, environmentID string) (string, string, error) {
 	body := struct {
 		EnvironmentID  string `json:"environmentId"`
 		ReuseCount     int    `json:"reuseCount"`
@@ -148,22 +153,29 @@ func createPairingCode(ctx context.Context, client *http.Client, base, apiKey, e
 	}{
 		EnvironmentID: environmentID,
 		ReuseCount:    1,
+		ExpirationDate: time.Now().UTC().
+			Add(24 * time.Hour).
+			Format(time.RFC3339),
 	}
 	var payload struct {
+		ID          string `json:"id"`
 		PairingCode string `json:"pairingCode"`
 	}
-	if err := doJSON(ctx, client, http.MethodPost, base+"v1/edgeinstances/pairingcode", apiKey, body, &payload); err != nil {
-		return "", fmt.Errorf("create pairing code: %w", err)
+	if err := doJSON(ctx, client, http.MethodPost, base+"v1/pairingcodes/satellite", apiKey, body, &payload); err != nil {
+		return "", "", fmt.Errorf("create pairing code: %w", err)
 	}
 	if payload.PairingCode == "" {
-		return "", errors.New("create pairing code: empty pairing code")
+		return "", "", errors.New("create pairing code: empty pairing code")
 	}
-	return payload.PairingCode, nil
+	if payload.ID == "" {
+		return "", "", errors.New("create pairing code: empty pairing code id")
+	}
+	return payload.PairingCode, payload.ID, nil
 }
 
 func ensureVSatctl(ctx context.Context, runner Runner, container string) error {
 	cmd := `if [ ! -x /tmp/vsatctl ]; then
-  curl -fsSLO https://dl.venafi.cloud/vsatctl
+  curl -fsSLo /tmp/vsatctl https://dl.venafi.cloud/vsatctl
   chmod +x /tmp/vsatctl
 fi
 /tmp/vsatctl version >/dev/null`
@@ -181,13 +193,23 @@ func installVSatellite(ctx context.Context, runner Runner, container, apiURL, pa
 	return err
 }
 
-func deleteStaleEdgeInstances(ctx context.Context, client *http.Client, base, apiKey, name string) error {
+func deleteStaleEdgeInstances(ctx context.Context, client *http.Client, base, apiKey, environmentID string) error {
 	instances, err := listEdgeInstances(ctx, client, base, apiKey)
 	if err != nil {
 		return fmt.Errorf("list edge instances: %w", err)
 	}
 	for _, inst := range instances {
-		if inst.Name != name {
+		instEnvironmentID := inst.EnvironmentID
+		if instEnvironmentID == "" {
+			instEnvironmentID = inst.Environment
+		}
+		if instEnvironmentID != environmentID {
+			continue
+		}
+		if strings.EqualFold(inst.EdgeStatus, "ACTIVE") || strings.EqualFold(inst.EdgeStatus, "CONNECTED") {
+			continue
+		}
+		if inst.IntegrationServicesCount != 0 {
 			continue
 		}
 		id := strings.TrimSpace(inst.ID)
@@ -201,7 +223,7 @@ func deleteStaleEdgeInstances(ctx context.Context, client *http.Client, base, ap
 	return nil
 }
 
-func pollActive(ctx context.Context, client *http.Client, base, apiKey, name string, interval, timeout time.Duration) (string, error) {
+func pollActive(ctx context.Context, client *http.Client, base, apiKey, pairingCodeID string, interval, timeout time.Duration) (string, error) {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
@@ -213,9 +235,9 @@ func pollActive(ctx context.Context, client *http.Client, base, apiKey, name str
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		status, err := fetchEdgeStatus(ctx, client, base, apiKey, name)
+		status, err := fetchEdgeStatus(ctx, client, base, apiKey, pairingCodeID)
 		if err == nil && strings.EqualFold(status, "active") {
-			return status, nil
+			return strings.ToLower(status), nil
 		}
 		select {
 		case <-ctx.Done():
@@ -228,17 +250,34 @@ func pollActive(ctx context.Context, client *http.Client, base, apiKey, name str
 	}
 }
 
-func fetchEdgeStatus(ctx context.Context, client *http.Client, base, apiKey, name string) (string, error) {
+func fetchEdgeStatus(ctx context.Context, client *http.Client, base, apiKey, pairingCodeID string) (string, error) {
 	instances, err := listEdgeInstances(ctx, client, base, apiKey)
 	if err != nil {
 		return "", err
 	}
 	for _, inst := range instances {
-		if inst.Name == name {
+		if inst.PairingCodeID == pairingCodeID {
 			return inst.EdgeStatus, nil
 		}
 	}
 	return "", errors.New("edge instance not found")
+}
+
+func renameEdgeInstance(ctx context.Context, client *http.Client, base, apiKey, pairingCodeID, name string) error {
+	instances, err := listEdgeInstances(ctx, client, base, apiKey)
+	if err != nil {
+		return err
+	}
+	for _, inst := range instances {
+		if inst.PairingCodeID != pairingCodeID || strings.TrimSpace(inst.ID) == "" {
+			continue
+		}
+		body := struct {
+			Name string `json:"name"`
+		}{Name: name}
+		return doJSON(ctx, client, http.MethodPut, base+"v1/edgeinstances/"+inst.ID, apiKey, body, nil)
+	}
+	return errors.New("edge instance not found")
 }
 
 func listEdgeInstances(ctx context.Context, client *http.Client, base, apiKey string) ([]edgeInstance, error) {

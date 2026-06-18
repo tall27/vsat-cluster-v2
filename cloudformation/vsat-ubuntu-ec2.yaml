@@ -1,8 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Launch a public Ubuntu EC2 host for VSAT Cluster v2 with an 8 GiB gp3 root
-  volume and a newly attached, unformatted gp3 EBS volume for the LXD COW btrfs
-  pool.
+  volume and a gp3 EBS block device for the LXD COW btrfs pool.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -69,12 +68,14 @@ Parameters:
 
   InstanceType:
     Type: String
-    Default: t3a.medium
+    Default: t3a.xlarge
     AllowedValues:
       - t3a.medium
       - t3.medium
       - t3a.large
       - t3.large
+      - t3a.xlarge
+      - t3.xlarge
       - m6a.large
       - m7a.large
     Description: EC2 instance type. The default is sized for a small VSAT Cluster v2 lab host.
@@ -140,7 +141,7 @@ Parameters:
     Default: /dev/sdf
     AllowedPattern: '^/dev/sd[f-p]$'
     ConstraintDescription: Use a Linux EBS device name from /dev/sdf through /dev/sdp.
-    Description: Requested attachment device name for the raw COW volume.
+    Description: Requested block device name for the COW volume.
 
 Resources:
   VsatSecurityGroup:
@@ -186,6 +187,14 @@ Resources:
             Throughput: !Ref RootVolumeThroughput
             DeleteOnTermination: true
             Encrypted: true
+        - DeviceName: !Ref CowVolumeDeviceName
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref CowVolumeSizeGiB
+            Iops: !Ref CowVolumeIops
+            Throughput: !Ref CowVolumeThroughput
+            DeleteOnTermination: true
+            Encrypted: true
       NetworkInterfaces:
         - DeviceIndex: '0'
           AssociatePublicIpAddress: true
@@ -200,32 +209,6 @@ Resources:
         - Key: Role
           Value: vsat-cluster-host
 
-  CowVolume:
-    Type: AWS::EC2::Volume
-    Properties:
-      AvailabilityZone: !GetAtt VsatInstance.AvailabilityZone
-      VolumeType: gp3
-      Size: !Ref CowVolumeSizeGiB
-      Iops: !Ref CowVolumeIops
-      Throughput: !Ref CowVolumeThroughput
-      Encrypted: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-lxd-cow'
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Purpose
-          Value: vsat-lxd-cow
-        - Key: Filesystem
-          Value: unformatted
-
-  CowVolumeAttachment:
-    Type: AWS::EC2::VolumeAttachment
-    Properties:
-      Device: !Ref CowVolumeDeviceName
-      InstanceId: !Ref VsatInstance
-      VolumeId: !Ref CowVolume
-
 Outputs:
   InstanceId:
     Description: EC2 instance ID for the VSAT Cluster v2 host.
@@ -238,10 +221,6 @@ Outputs:
   PublicDnsName:
     Description: Public DNS name assigned to the instance.
     Value: !GetAtt VsatInstance.PublicDnsName
-
-  CowVolumeId:
-    Description: EBS volume ID for the attached, unformatted LXD COW volume.
-    Value: !Ref CowVolume
 
   SecurityGroupId:
     Description: Security group ID attached to the instance.
