@@ -67,9 +67,23 @@ For AWS-side operations on this project, use the Venafi SE Basic Access profile:
 aws <service> <operation> --profile Venafi-SE-Basic-Access-427380916706
 ```
 
+Recommended AWS deployment is the nested CloudFormation package under
+[`cloudformation/`](cloudformation/README.md). It follows the `onebox.v2` stack
+structure, publishes templates to `s3://akush/vsat-cluster/`, creates an 8 GiB
+root volume plus a separate raw gp3 EBS volume, and runs quickstart from UserData:
+
 ```bash
-# 1. Prepare a fresh host: installs LXD, the vsat-nested profile and NAT.
-sudo ./scripts/bootstrap-host.sh
+curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo VSAT_COW_DEVICE=/dev/nvme1n1 bash
+```
+
+Manual host prep also requires a dedicated unformatted block device for the LXD
+`cow` btrfs pool. The app intentionally avoids LXD's slow `dir` storage for new
+VSatellite launches.
+
+```bash
+# 1. Prepare a fresh host: installs LXD, creates cow on the raw disk,
+#    configures the vsat-nested profile and NAT.
+sudo VSAT_COW_DEVICE=/dev/nvme1n1 ./scripts/bootstrap-host.sh
 
 # 2. Install the binary + systemd unit (serves :443, config in /etc/vsat-cluster).
 sudo ./scripts/install.sh ./vsat-webapp

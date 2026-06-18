@@ -137,16 +137,18 @@ cells show `--`.
 
 ## Host prerequisites (`scripts/bootstrap-host.sh`)
 
-Ported from the sibling project's `bootstrap-onebox.sh`:
-- Install/init LXD; provision a **20GB loop-file btrfs pool (`cow`)** when `/`
-  has the room, and point the `vsat-nested` profile's root device at it instead
-  of the default `dir`-backed pool. `dir` does a full filesystem copy on every
-  `lxc launch` — slow enough that back-to-back launches can miss the kmsg-fix
-  retry window (see [the live finding](test-report.md#follow-up-findings-from-real-vsatellite-installs)).
-  `btrfs` gives near-instant copy-on-write clones with no dedicated block device:
-  confirmed live, exec-ready in ~1 s vs. routinely blowing a 12 s budget on `dir`,
-  even with three containers launched concurrently. Falls back to the default
-  pool when there isn't `COW_SIZE_GB + 5`GB free.
+Ported from the sibling project's `bootstrap-onebox.sh` and updated for the
+dedicated-disk CloudFormation path:
+- Install/init LXD; provision a required **btrfs `cow` pool** on a dedicated,
+  unformatted block device such as `/dev/nvme1n1`, and point the `vsat-nested`
+  profile's root device at it instead of the default `dir`-backed pool. `dir`
+  does a full filesystem copy on every `lxc launch` — slow enough that
+  back-to-back launches can miss the kmsg-fix retry window (see
+  [the live finding](test-report.md#follow-up-findings-from-real-vsatellite-installs)).
+  `btrfs` gives near-instant copy-on-write clones; confirmed live, exec-ready in
+  ~1 s vs. routinely blowing a 12 s budget on `dir`, even with three containers
+  launched concurrently. Bootstrap must fail fast when no dedicated COW disk is
+  available; do not fall back to `dir`.
 - Create the **`vsat-nested`** profile (`security.nesting`, `security.privileged`,
   kernel modules, `raw.lxc` apparmor=unconfined / no cap drop / full cgroup
   devices / rw proc+sys).

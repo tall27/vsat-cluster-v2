@@ -101,12 +101,12 @@ driver does a full filesystem copy on every launch, slow enough on a loaded
 2-core box that a freshly launched container can miss the kmsg-retry window
 entirely when launches stack up.
 
-**Fix**: provision a 20GB loop-file **btrfs** pool (`cow`) and point
+**Fix**: provision a dedicated raw-disk **btrfs** pool (`cow`) and point
 `vsat-nested`'s root device at it — copy-on-write clones instead of full copies.
 Validated live: 3 concurrent launches all became `lxc exec`-ready in **~1 second**
-(vs. routinely blowing the 12 s budget on `dir`). Now baked into
-`scripts/bootstrap-host.sh` (falls back to the default pool if `/` doesn't have
-`COW_SIZE_GB + 5`GB free).
+(vs. routinely blowing the 12 s budget on `dir`). The current AWS path creates a
+separate gp3 COW volume and `scripts/bootstrap-host.sh` fails fast if no
+dedicated unformatted disk is available; do not fall back to `dir`.
 
 ### 4. Heavy `apport` churn traced to journald's watchdog, not real crashes
 

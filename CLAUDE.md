@@ -15,10 +15,11 @@ Host prereqs from proven lab model, encoded in `scripts/bootstrap-host.sh`:
    apparmor/cgroup/proc-sys overrides) — required for stable nested k3s.
 2. iptables SNAT from `lxdbr0` CIDR to host's primary IP, so containers
    reach internet through single public IP.
-3. Loop-file **btrfs `cow` pool** (20GB, when `/` has room) wired into
+3. Dedicated raw block device backed **btrfs `cow` pool** wired into
    `vsat-nested` as `root` device — copy-on-write launches are exec-ready in
    ~1s vs. routinely blowing the kmsg-retry budget on the default `dir` driver
-   (full-copy per launch). Falls back to the default pool if space is tight.
+   (full-copy per launch). Do not fall back to `dir`; bootstrap must fail fast
+   if no suitable unformatted COW disk is attached.
 
 At add time (`internal/lxdctl.Add`, one retried `lxc exec`, see below) each
 container also gets: `/dev/kmsg` `tmpfiles.d` workaround, journald watchdog
@@ -116,10 +117,19 @@ Packages:
 
 - For AWS CLI work in this project, always include
   `--profile Venafi-SE-Basic-Access-427380916706`.
-- `scripts/bootstrap-host.sh` — idempotent host prep (LXD, COW pool, profile, NAT, autostart).
+- `cloudformation/` — nested stack package modeled after `onebox.v2`, published
+  to `s3://akush/vsat-cluster/`. Root template:
+  `https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/mainstack.yaml`.
+- Verified stack from 2026-06-18: `vsat-cluster-cow-06180330`, instance
+  `i-09b13b5b2fbb3df64`, public IP `18.227.0.199`, COW volume
+  `vol-004ced4a51b21efec`, `/healthz` returned `200 OK`.
+- CloudFormation UserData runs:
+  `curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo VSAT_COW_DEVICE=/dev/nvme1n1 bash`.
+- `scripts/bootstrap-host.sh` — idempotent host prep (LXD, required dedicated
+  COW pool, profile, NAT, autostart).
 - `scripts/install.sh` + `scripts/vsat-webapp.service` — install binary + systemd unit.
-- No GitHub Actions workflow yet; `go test ./...` and linux/amd64 cross-build are
-  the gate.
+- GitHub Actions `Release` workflow rebuilds the `latest` release on pushes to
+  `master`; `quickstart.sh` consumes the `latest` release assets.
 
 ## Backlog (not built yet)
 

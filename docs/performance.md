@@ -11,6 +11,39 @@ Use this AWS CLI profile for project work:
 --profile Venafi-SE-Basic-Access-427380916706
 ```
 
+## Verified COW-volume CloudFormation deployment
+
+On 2026-06-18, the project was moved to a nested CloudFormation deployment
+modeled after `onebox.v2`:
+
+| Field | Value |
+|---|---|
+| S3 prefix | `s3://akush/vsat-cluster/` |
+| Root template URL | `https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/mainstack.yaml` |
+| Stack | `vsat-cluster-cow-06180330` |
+| Instance ID | `i-09b13b5b2fbb3df64` |
+| Instance type | `t3a.medium` |
+| Public IP | `18.227.0.199` |
+| Root volume | `8 GiB gp3` |
+| COW volume | `vol-004ced4a51b21efec`, `40 GiB gp3`, attached as `/dev/nvme1n1` |
+| UserData | `curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh \| sudo VSAT_COW_DEVICE=/dev/nvme1n1 bash` |
+
+Verification results:
+
+- CloudFormation reached `CREATE_COMPLETE`.
+- UserData completed successfully.
+- `vsat-webapp.service` was active on `:443`.
+- Public `https://18.227.0.199/healthz` returned `200 OK`.
+- Public `/` returned `401 Unauthorized`, confirming the UI was reachable and
+  auth was enforced.
+- LXD storage pool `cow` exists with driver `btrfs`.
+- `vsat-nested` root disk uses pool `cow`.
+- `/dev/nvme1n1` is the 40 GiB attached btrfs COW volume.
+
+The important conclusion is that COW storage should be treated as required
+infrastructure, not an optional fallback. `scripts/bootstrap-host.sh` now fails
+fast if it cannot find or use a dedicated unformatted COW disk.
+
 Known instance:
 
 | Field | Value |
@@ -110,14 +143,18 @@ Suggested starting point:
 | Setting | Value |
 |---|---|
 | Volume type | `gp3` |
-| Size | `100 GiB` |
-| IOPS | `6000` |
-| Throughput | `250 MiB/s` |
+| Size | `40-100 GiB` |
+| IOPS | `3000-6000` |
+| Throughput | `125-250 MiB/s` |
 
 Do not over-provision far beyond this on `t3a.medium`; the instance cannot fully
 use very high gp3 settings under sustained load.
 
-### 3. Keep LXD on copy-on-write storage
+The verified CloudFormation test used `40 GiB / 3000 IOPS / 125 MiB/s` on a
+separate gp3 volume and successfully created the LXD `cow` btrfs pool on
+`/dev/nvme1n1`.
+
+### 3. Require LXD copy-on-write storage
 
 Confirm LXD uses the btrfs `cow` pool created by `scripts/bootstrap-host.sh`.
 Avoid the default `dir` storage driver for repeated container launches, because
@@ -178,4 +215,3 @@ aws ec2 describe-instance-types \
   --profile Venafi-SE-Basic-Access-427380916706 \
   --instance-types t3a.medium t3a.large
 ```
-

@@ -16,10 +16,15 @@ aws ec2 describe-instances --profile Venafi-SE-Basic-Access-427380916706
 
 ## Quick start (recommended)
 
-On a fresh host, as root:
+On a fresh host, attach a dedicated unformatted EBS volume for LXD COW storage
+first. The recommended CloudFormation path is documented in
+[cloudformation/README.md](../cloudformation/README.md); it creates an 8 GiB root
+volume plus a separate raw gp3 volume and runs quickstart from UserData.
+
+If running manually on an already-created host, as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo VSAT_COW_DEVICE=/dev/nvme1n1 bash
 ```
 
 This downloads the latest [GitHub release](https://github.com/tall27/vsat-cluster-v2/releases)
@@ -27,6 +32,10 @@ binary, runs `bootstrap-host.sh` (LXD, `vsat-nested` profile, NAT) and `install.
 (binary + systemd unit) in one shot, and prints the URL to finish setup at. It's
 idempotent — re-run it to pick up a newer release. To pin the SNAT source IP, pass
 it through: `... | sudo bash -s -- 10.0.2.115`.
+
+`VSAT_COW_DEVICE` is required unless `bootstrap-host.sh` can safely auto-detect a
+single unformatted non-root disk. The project intentionally fails fast without a
+dedicated COW disk instead of falling back to slow LXD `dir` storage.
 
 The sections below describe what `quickstart.sh` does step by step — useful if you
 want to run the steps individually, build from source, or debug a failure.
@@ -44,16 +53,15 @@ Copy `out/vsat-webapp` and the `scripts/` folder to the host.
 ## 2. Prepare the host (once)
 
 ```bash
-sudo ./scripts/bootstrap-host.sh            # auto-detects the primary IP for SNAT
+sudo VSAT_COW_DEVICE=/dev/nvme1n1 ./scripts/bootstrap-host.sh
 # or pin the SNAT source IP:
-sudo ./scripts/bootstrap-host.sh 10.0.2.115
+sudo VSAT_COW_DEVICE=/dev/nvme1n1 ./scripts/bootstrap-host.sh 10.0.2.115
 ```
 
-This installs/initialises LXD, provisions a 20GB loop-file btrfs pool (`cow`) for
-fast copy-on-write container launches when `/` has the room (falls back to the
-default pool otherwise), creates the `vsat-nested` profile, enables IP
-forwarding + the SNAT rule for `lxdbr0`, and sets autostart on existing containers.
-It is idempotent.
+This installs/initialises LXD, creates the required btrfs `cow` pool on the
+dedicated unformatted block device, creates the `vsat-nested` profile, enables IP
+forwarding + the SNAT rule for `lxdbr0`, and sets autostart on existing
+containers. It is idempotent.
 
 > The iptables rules are not persisted across reboot by this script. For a permanent
 > setup, install `iptables-persistent` or re-run the bootstrap from a boot unit.
@@ -143,9 +151,10 @@ cost, confirmed live).
 - **Containers slow to become `lxc exec`-ready / kmsg fix exhausts its retries
   under load** — the default `dir` storage driver does a full filesystem copy on
   every `lxc launch`; back-to-back launches can blow the retry budget. Re-run
-  `bootstrap-host.sh` on a host provisioned before the COW pool existed to
-  provision the loop-file `cow` btrfs pool and rewire `vsat-nested` onto it
-  (existing containers are unaffected; only future launches benefit).
+  `bootstrap-host.sh` only after attaching a dedicated raw EBS volume, for
+  example `sudo VSAT_COW_DEVICE=/dev/nvme1n1 ./scripts/bootstrap-host.sh`.
+  The `vsat-nested` profile must point at the btrfs `cow` pool for future
+  launches.
 
 ## Reaching the UI
 
