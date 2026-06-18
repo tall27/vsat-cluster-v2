@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VSAT Cluster v2 security group stack, modeled after onebox.v2.
+
+Parameters:
+  CustomerName:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  VpcCidr:
+    Type: String
+  AdminCidr:
+    Type: String
+    Description: CIDR allowed for SSH.
+    Default: 127.0.0.1/32
+    AllowedPattern: '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[1-2][0-9]|3[0-2])$'
+
+Resources:
+  VsatSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS/SSH and internal VSAT Cluster traffic.
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${CustomerName}-vsat-sg'
+        - Key: AllowFromEverywhere
+          Value: 'yes'
+
+  VsatHttpsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VsatSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: Public HTTPS for VSAT Cluster UI
+
+  VsatSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VsatSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AdminCidr
+      Description: SSH from admin CIDR
+
+  VsatVpcIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VsatSecurityGroup
+      IpProtocol: -1
+      CidrIp: !Ref VpcCidr
+      Description: Internal VPC traffic
+
+Outputs:
+  VsatSecurityGroupId:
+    Value: !Ref VsatSecurityGroup

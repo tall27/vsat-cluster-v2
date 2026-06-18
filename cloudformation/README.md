@@ -1,70 +1,79 @@
 # VSAT Cluster v2 CloudFormation
 
-This directory contains a standalone template for launching a fresh public Ubuntu
-EC2 host for VSAT Cluster v2. The stack creates:
+This directory contains the CloudFormation package for launching a fresh public
+Ubuntu EC2 host for VSAT Cluster v2.
 
-- one EC2 instance from Canonical's public Ubuntu 24.04 SSM AMI parameter
-- an 8 GiB encrypted gp3 root volume by default
-- one newly created encrypted gp3 EBS volume attached as a raw, unformatted block
-  device for the future LXD COW btrfs pool
-- a security group with parameterized SSH and HTTPS ingress
+The current stack follows the `onebox.v2` nested-stack pattern:
 
-The COW volume is intentionally not formatted or mounted by CloudFormation. It is
-tagged with `Purpose=vsat-lxd-cow` and `Filesystem=unformatted` so bootstrap logic
-can discover and claim it later.
+- `mainstack.yaml` - root stack that points child stacks at
+  `s3://akush/vsat-cluster/`
+- `vpcstack.yaml` - fresh VPC, public subnet, internet gateway, route table
+- `sgstack.yaml` - SSH from `AdminCidr`, public HTTPS, internal VPC traffic
+- `vsatstack.yaml` - Ubuntu EC2 instance, 8 GiB root, raw gp3 COW volume, and
+  UserData quickstart
+- `vsat-ubuntu-ec2.yaml` - older standalone template kept for reference
 
-## Launch
-
-Use `us-east-2` unless you have a reason to choose another region. The template is
-configurable for another region as long as the Ubuntu SSM parameter exists there.
+The workload stack launches Ubuntu 24.04, attaches a separate raw gp3 EBS volume,
+and runs this UserData command after `/dev/nvme1n1` appears:
 
 ```bash
-aws cloudformation create-stack \
-  --stack-name vsat-cluster-v2-host \
-  --template-body file://cloudformation/vsat-ubuntu-ec2.yaml \
-  --parameters \
-    ParameterKey=VpcId,ParameterValue=vpc-xxxxxxxx \
-    ParameterKey=SubnetId,ParameterValue=subnet-xxxxxxxx \
-    ParameterKey=KeyName,ParameterValue=my-key-pair \
-    ParameterKey=SshIngressCidr,ParameterValue=203.0.113.10/32 \
-    ParameterKey=HttpsIngressCidr,ParameterValue=0.0.0.0/0 \
+curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo VSAT_COW_DEVICE=/dev/nvme1n1 bash
+```
+
+Quickstart creates the required LXD `cow` btrfs pool on the attached EBS volume,
+installs the web app, and starts `vsat-webapp.service`.
+
+## Publish Templates
+
+```bash
+aws s3 sync cloudformation/ s3://akush/vsat-cluster/ \
   --profile Venafi-SE-Basic-Access-427380916706 \
   --region us-east-2
 ```
 
-After the stack reaches `CREATE_COMPLETE`, SSH to the instance as `ubuntu` and run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/tall27/vsat-cluster-v2/master/scripts/quickstart.sh | sudo bash
-```
-
-## Validate With AWS
-
-Local YAML parsing can catch syntax problems, but CloudFormation's full validation
-requires AWS API access:
+## Validate
 
 ```bash
 aws cloudformation validate-template \
-  --template-body file://cloudformation/vsat-ubuntu-ec2.yaml \
+  --template-url https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/mainstack.yaml \
   --profile Venafi-SE-Basic-Access-427380916706 \
   --region us-east-2
 ```
 
-## Important Parameters
+## Launch
 
-| Parameter | Default | Purpose |
-|---|---:|---|
-| `InstanceType` | `t3a.medium` | EC2 shape for the host |
-| `UbuntuAmiId` | Canonical Ubuntu 24.04 SSM path | Region-local Ubuntu AMI lookup |
-| `RootVolumeSizeGiB` | `8` | Root gp3 disk size |
-| `RootVolumeIops` | `3000` | Root gp3 IOPS |
-| `RootVolumeThroughput` | `125` | Root gp3 throughput in MiB/s |
-| `CowVolumeSizeGiB` | `40` | Attached raw EBS volume size |
-| `CowVolumeIops` | `3000` | COW gp3 IOPS |
-| `CowVolumeThroughput` | `125` | COW gp3 throughput in MiB/s |
-| `CowVolumeDeviceName` | `/dev/sdf` | Requested EC2 attachment device |
+```bash
+aws cloudformation create-stack \
+  --stack-name vsat-cluster-cow-<suffix> \
+  --template-url https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/mainstack.yaml \
+  --parameters \
+    ParameterKey=CustomerName,ParameterValue=vsat-cow-<suffix> \
+    ParameterKey=AdminCidr,ParameterValue=<your-public-ip>/32 \
+    ParameterKey=KeyName,ParameterValue=talk-vnfi-Ohio \
+    ParameterKey=InstanceType,ParameterValue=t3a.medium \
+    ParameterKey=RootVolumeSizeGiB,ParameterValue=8 \
+    ParameterKey=CowVolumeSizeGiB,ParameterValue=40 \
+    ParameterKey=CowVolumeIops,ParameterValue=3000 \
+    ParameterKey=CowVolumeThroughput,ParameterValue=125 \
+  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+  --profile Venafi-SE-Basic-Access-427380916706 \
+  --region us-east-2
+```
+
+## Verified Test Stack
+
+Test stack `vsat-cluster-cow-06180330` was created in `us-east-2` from the S3
+root template. Verification showed:
+
+- CloudFormation `CREATE_COMPLETE`
+- UserData completed
+- `vsat-webapp.service` active on port 443
+- public `https://18.227.0.199/healthz` returned `200 OK`
+- LXD storage pool `cow` exists with driver `btrfs`
+- `vsat-nested` root disk uses pool `cow`
+- `/dev/nvme1n1` is the 40 GiB attached COW volume
 
 ## Outputs
 
-The stack outputs the instance ID, public IP, public DNS name, COW EBS volume ID,
-security group ID, and the quickstart command.
+The root stack outputs the instance ID, public IP, public DNS name, raw COW volume
+ID, SSH command, and health URL.

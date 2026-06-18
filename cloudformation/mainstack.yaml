@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  VSAT Cluster v2 host stack. Nested CloudFormation layout follows the onebox.v2
+  pattern: VPC stack, security group stack, and workload stack. Templates are
+  published under s3://akush/vsat-cluster/.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Demo configuration
+        Parameters:
+          - CustomerName
+          - AdminCidr
+      - Label:
+          default: Instance
+        Parameters:
+          - InstanceType
+          - KeyName
+      - Label:
+          default: Storage
+        Parameters:
+          - RootVolumeSizeGiB
+          - CowVolumeSizeGiB
+          - CowVolumeIops
+          - CowVolumeThroughput
+
+Parameters:
+  CustomerName:
+    Type: String
+    Description: DNS-safe name used for resource names.
+    Default: vsat-cluster
+    MinLength: 1
+    MaxLength: 40
+    AllowedPattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+    ConstraintDescription: Use lowercase letters, numbers, and hyphens only; start and end with a letter or number.
+
+  AdminCidr:
+    Type: String
+    Description: Deployer public IP CIDR for SSH.
+    Default: 0.0.0.0/0
+    AllowedPattern: '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[1-2][0-9]|3[0-2])$'
+
+  InstanceType:
+    Type: String
+    Description: EC2 instance type for the VSAT Cluster host.
+    Default: t3a.medium
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair for SSH as ubuntu.
+    Default: talk-vnfi-Ohio
+
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: 8
+    MinValue: 8
+
+  CowVolumeSizeGiB:
+    Type: Number
+    Default: 40
+    MinValue: 8
+
+  CowVolumeIops:
+    Type: Number
+    Default: 3000
+    MinValue: 3000
+    MaxValue: 16000
+
+  CowVolumeThroughput:
+    Type: Number
+    Default: 125
+    MinValue: 125
+    MaxValue: 1000
+
+Resources:
+  VpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/vpcstack.yaml
+      Parameters:
+        CustomerName: !Ref CustomerName
+
+  SecurityGroupStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VpcStack
+    Properties:
+      TemplateURL: https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/sgstack.yaml
+      Parameters:
+        CustomerName: !Ref CustomerName
+        VpcId: !GetAtt VpcStack.Outputs.VpcId
+        VpcCidr: !GetAtt VpcStack.Outputs.VpcCidr
+        AdminCidr: !Ref AdminCidr
+
+  VsatStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: SecurityGroupStack
+    Properties:
+      TemplateURL: https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/vsatstack.yaml
+      Parameters:
+        CustomerName: !Ref CustomerName
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        SubnetId: !GetAtt VpcStack.Outputs.PublicSubnetId
+        SecurityGroupId: !GetAtt SecurityGroupStack.Outputs.VsatSecurityGroupId
+        RootVolumeSizeGiB: !Ref RootVolumeSizeGiB
+        CowVolumeSizeGiB: !Ref CowVolumeSizeGiB
+        CowVolumeIops: !Ref CowVolumeIops
+        CowVolumeThroughput: !Ref CowVolumeThroughput
+
+Outputs:
+  InstanceId:
+    Description: VSAT Cluster EC2 instance ID.
+    Value: !GetAtt VsatStack.Outputs.InstanceId
+  PublicIp:
+    Description: Public IPv4 address.
+    Value: !GetAtt VsatStack.Outputs.PublicIp
+  PublicDnsName:
+    Description: Public DNS name.
+    Value: !GetAtt VsatStack.Outputs.PublicDnsName
+  CowVolumeId:
+    Description: Raw gp3 COW volume ID.
+    Value: !GetAtt VsatStack.Outputs.CowVolumeId
+  SshCommand:
+    Description: SSH command for the host.
+    Value: !Sub
+      - 'ssh ubuntu@${DnsName}'
+      - DnsName: !GetAtt VsatStack.Outputs.PublicDnsName
+  HealthUrl:
+    Description: VSAT Cluster health endpoint.
+    Value: !Sub
+      - 'https://${Ip}/healthz'
+      - Ip: !GetAtt VsatStack.Outputs.PublicIp
