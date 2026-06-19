@@ -25,26 +25,28 @@
       </td>
       <td class="mono">{{if .IPv4}}{{.IPv4}}{{else}}&mdash;{{end}}</td>
       <td class="actions-col">
-        <a class="btn btn-small" href="/vsat/{{.Name}}/terminal" target="_blank" rel="noopener">
-          {{template "icon-terminal" .}}
-          Terminal
-        </a>
-        <form method="post" action="/containers/{{.Name}}/delete" class="inline"
-              onsubmit="return confirm('Remove {{.Name}}? This uninstalls VSatellite and destroys the container.');">
-          <button class="btn btn-small btn-danger" type="submit">
-            {{template "icon-trash" .}}
-            Remove
+        <div class="actions-list">
+          <a class="btn btn-small" href="/vsat/{{.Name}}/terminal" target="_blank" rel="noopener">
+            {{template "icon-terminal" .}}
+            Terminal
+          </a>
+          <form method="post" action="/containers/{{.Name}}/delete" class="inline"
+                onsubmit="return confirm('Remove {{.Name}}? This uninstalls VSatellite and destroys the container.');">
+            <button class="btn btn-small btn-danger" type="submit">
+              {{template "icon-trash" .}}
+              Remove
+            </button>
+          </form>
+          {{if eq .Status "Running"}}
+          <button type="button" class="btn btn-small btn-install" id="install-btn-{{.Name}}"
+                  data-vsat="{{.Name}}" data-state="{{if .VSatelliteInstalled}}status{{else}}ready{{end}}"
+                  data-installed="{{.VSatelliteInstalled}}" onclick="toggleInstall('{{.Name}}')">
+            <span class="btn-install-icon-ready">{{template "icon-install" .}}</span>
+            <span class="btn-install-icon-busy">{{template "icon-hourglass" .}}</span>
+            <span class="btn-install-label">{{if .VSatelliteInstalled}}Status{{else}}Install{{end}}</span>
           </button>
-        </form>
-        {{if eq .Status "Running"}}
-        <button type="button" class="btn btn-small btn-install" id="install-btn-{{.Name}}"
-                data-vsat="{{.Name}}" data-state="{{if .VSatelliteInstalled}}status{{else}}ready{{end}}"
-                data-installed="{{.VSatelliteInstalled}}" onclick="toggleInstall('{{.Name}}')">
-          <span class="btn-install-icon-ready">{{template "icon-install" .}}</span>
-          <span class="btn-install-icon-busy">{{template "icon-hourglass" .}}</span>
-          <span class="btn-install-label">{{if .VSatelliteInstalled}}Status{{else}}Install{{end}}</span>
-        </button>
-        {{end}}
+          {{end}}
+        </div>
       </td>
     </tr>
     {{if eq .Status "Running"}}
