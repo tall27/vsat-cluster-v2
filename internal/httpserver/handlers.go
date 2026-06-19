@@ -130,6 +130,7 @@ func (s *Server) buildContainerView(r *http.Request) (pageData, error) {
 	if err != nil {
 		return pageData{}, err
 	}
+	s.applyContainerMetadata(containers)
 	used := len(containers)
 	return pageData{
 		ShowNav:       true,
@@ -196,6 +197,7 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		s.renderRemoveError(w, r, "Could not remove container: "+err.Error())
 		return
 	}
+	s.removeContainerMetadata(name)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -234,7 +236,64 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		writeInstallJSON(w, http.StatusBadRequest, "error", sanitizeInstallError(err))
 		return
 	}
+	s.saveContainerMetadata(name, result)
 	writeInstallJSON(w, http.StatusOK, "ok", result.EdgeStatus)
+}
+
+func (s *Server) applyContainerMetadata(containers []lxdctl.Container) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg == nil || len(s.cfg.ContainerMetadata) == 0 {
+		return
+	}
+	for i := range containers {
+		meta := s.cfg.ContainerMetadata[containers[i].Name]
+		containers[i].TenantURL = meta.TenantURL
+		containers[i].CompanyID = meta.CompanyID
+		containers[i].OrganizationID = meta.OrganizationID
+	}
+}
+
+func (s *Server) saveContainerMetadata(name string, result *vsatinstall.InstallResult) {
+	if result == nil || (result.TenantURL == "" && result.CompanyID == "" && result.OrganizationID == "") {
+		return
+	}
+	s.mu.Lock()
+	cfg := s.cfg
+	if cfg != nil {
+		if cfg.ContainerMetadata == nil {
+			cfg.ContainerMetadata = make(map[string]config.ContainerMetadata)
+		}
+		cfg.ContainerMetadata[name] = config.ContainerMetadata{
+			TenantURL:      result.TenantURL,
+			CompanyID:      result.CompanyID,
+			OrganizationID: result.OrganizationID,
+		}
+	}
+	var err error
+	if cfg != nil {
+		err = s.store.Save(cfg)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		s.logger.Printf("save tenant metadata %s: %v", name, err)
+	}
+}
+
+func (s *Server) removeContainerMetadata(name string) {
+	s.mu.Lock()
+	cfg := s.cfg
+	if cfg != nil && len(cfg.ContainerMetadata) > 0 {
+		delete(cfg.ContainerMetadata, name)
+	}
+	var err error
+	if cfg != nil {
+		err = s.store.Save(cfg)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		s.logger.Printf("remove tenant metadata %s: %v", name, err)
+	}
 }
 
 func writeInstallJSON(w http.ResponseWriter, code int, status, message string) {

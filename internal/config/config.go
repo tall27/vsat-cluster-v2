@@ -43,6 +43,15 @@ type Config struct {
 	InstancePrefix string `json:"instancePrefix"`
 	// MaxContainers caps how many VSAT containers may exist at once.
 	MaxContainers int `json:"maxContainers"`
+	// ContainerMetadata stores non-secret display metadata by container name.
+	ContainerMetadata map[string]ContainerMetadata `json:"containerMetadata,omitempty"`
+}
+
+// ContainerMetadata is non-secret metadata captured after successful installs.
+type ContainerMetadata struct {
+	TenantURL      string `json:"tenantUrl,omitempty"`
+	CompanyID      string `json:"companyId,omitempty"`
+	OrganizationID string `json:"organizationId,omitempty"`
 }
 
 // Store reads and writes the encrypted config within a directory.

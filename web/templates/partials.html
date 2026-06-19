@@ -55,7 +55,7 @@
             {{if .VSatelliteInstalled}}
             <div class="install-panel-inner">
               <p class="muted">{{if eq .VSatelliteStatus "running"}}vSatellite installed and running{{else}}vSatellite installed{{end}}</p>
-              <p class="muted">Tenant details are not stored locally on this host.</p>
+              <p class="muted">{{if .TenantURL}}{{.TenantURL}}{{else}}Tenant details were not captured during install.{{end}}</p>
             </div>
             {{else}}
             <form class="install-panel-inner" method="post" action="/containers/{{.Name}}/install" onsubmit="return confirmInstall(event, '{{.Name}}')">

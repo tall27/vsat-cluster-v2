@@ -238,6 +238,40 @@ func TestDashboardShowsStatusButtonForInstalledVSatellite(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsStoredVSatelliteTenantURL(t *testing.T) {
+	runner := &recordingRunner{
+		listJSON: `[{"name":"vsat-a","status":"Running","state":{"network":{}}}]`,
+		execOut:  []byte("running\n"),
+	}
+	srv := newTestServerWithRunner(t, runner)
+	cookies := setupSessionRequest(t, srv)
+	cfg := srv.currentConfig()
+	cfg.ContainerMetadata = map[string]config.ContainerMetadata{
+		"vsat-a": {TenantURL: "https://demo.venafi.cloud"},
+	}
+	if err := srv.store.Save(cfg); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	srv.applyConfig(cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected dashboard, got %d", rec.Code)
+	}
+	if !strings.Contains(body, "https://demo.venafi.cloud") {
+		t.Fatalf("expected stored tenant URL in status panel, got %q", body)
+	}
+	if strings.Contains(body, "Tenant details are not stored locally on this host.") {
+		t.Fatalf("old tenant fallback should not render when metadata exists: %q", body)
+	}
+}
+
 func TestRemoveUninstallsBeforeDeletingContainer(t *testing.T) {
 	runner := &recordingRunner{listJSON: `[{"name":"vsat-a","status":"Running","state":{"network":{}}}]`}
 	srv := newTestServerWithRunner(t, runner)

@@ -68,7 +68,8 @@ body {
 .grid th { font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); font-weight: 600; }
 .grid tr:last-child td { border-bottom: none; }
 .actions-col { text-align: right; white-space: nowrap; }
-.actions-col .btn { margin-left: 6px; }
+.grid td.actions-col { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.actions-col .btn { margin-left: 0; }
 .empty { text-align: center; color: var(--muted); padding: 26px; }
 .grid-foot { color: var(--muted); font-size: 12px; margin: 12px 4px 0; }
 

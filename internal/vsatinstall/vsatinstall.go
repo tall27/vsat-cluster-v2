@@ -44,8 +44,17 @@ type InstallOpts struct {
 
 // InstallResult is returned to the web UI after a successful install.
 type InstallResult struct {
-	PairingCode string `json:"pairingCode,omitempty"`
-	EdgeStatus  string `json:"edgeStatus,omitempty"`
+	PairingCode    string `json:"pairingCode,omitempty"`
+	EdgeStatus     string `json:"edgeStatus,omitempty"`
+	TenantURL      string `json:"tenantUrl,omitempty"`
+	CompanyID      string `json:"companyId,omitempty"`
+	OrganizationID string `json:"organizationId,omitempty"`
+}
+
+type tenantMetadata struct {
+	TenantURL      string
+	CompanyID      string
+	OrganizationID string
 }
 
 type edgeInstance struct {
@@ -81,6 +90,7 @@ func InstallCCM(ctx context.Context, opts InstallOpts) (*InstallResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	tenant, _ := fetchTenantMetadata(ctx, client, base, apiKey)
 	if err := deleteStaleEdgeInstances(ctx, client, base, apiKey, environmentID); err != nil {
 		return nil, err
 	}
@@ -101,7 +111,38 @@ func InstallCCM(ctx context.Context, opts InstallOpts) (*InstallResult, error) {
 	if err := renameEdgeInstance(ctx, client, base, apiKey, pairingCodeID, container); err != nil {
 		return nil, err
 	}
-	return &InstallResult{PairingCode: pairingCode, EdgeStatus: status}, nil
+	return &InstallResult{
+		PairingCode:    pairingCode,
+		EdgeStatus:     status,
+		TenantURL:      tenant.TenantURL,
+		CompanyID:      tenant.CompanyID,
+		OrganizationID: tenant.OrganizationID,
+	}, nil
+}
+
+func fetchTenantMetadata(ctx context.Context, client *http.Client, base, apiKey string) (tenantMetadata, error) {
+	var payload struct {
+		Company struct {
+			URLPrefix      string `json:"urlPrefix"`
+			ID             string `json:"id"`
+			OrganizationID string `json:"organizationId"`
+		} `json:"company"`
+	}
+	if err := doJSON(ctx, client, http.MethodGet, base+"v1/useraccounts", apiKey, nil, &payload); err != nil {
+		return tenantMetadata{}, err
+	}
+	companyID := strings.TrimSpace(payload.Company.URLPrefix)
+	meta := tenantMetadata{
+		CompanyID:      companyID,
+		OrganizationID: strings.TrimSpace(payload.Company.ID),
+	}
+	if meta.OrganizationID == "" {
+		meta.OrganizationID = strings.TrimSpace(payload.Company.OrganizationID)
+	}
+	if companyID != "" {
+		meta.TenantURL = "https://" + companyID + ".venafi.cloud"
+	}
+	return meta, nil
 }
 
 func probeRegions(ctx context.Context, client *http.Client, apiKey, explicitBase string, regionBases []string) (string, string, error) {

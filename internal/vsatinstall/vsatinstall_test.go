@@ -34,6 +34,8 @@ func TestInstallCCMCreatesPairingCodeAndRunsVSatctl(t *testing.T) {
 			sawAPIKey = true
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/useraccounts":
+			json.NewEncoder(w).Encode(map[string]any{"company": map[string]string{"urlPrefix": "demo", "id": "org-1"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/environments":
 			json.NewEncoder(w).Encode(map[string]any{"environments": []map[string]string{{"id": "env-1"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/edgeinstances":
@@ -82,6 +84,9 @@ func TestInstallCCMCreatesPairingCodeAndRunsVSatctl(t *testing.T) {
 	}
 	if result.PairingCode != "pair-123" || result.EdgeStatus != "active" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.TenantURL != "https://demo.venafi.cloud" || result.CompanyID != "demo" || result.OrganizationID != "org-1" {
+		t.Fatalf("unexpected tenant metadata: %+v", result)
 	}
 	if len(runner.scripts) != 2 {
 		t.Fatalf("expected ensure+install scripts, got %d", len(runner.scripts))

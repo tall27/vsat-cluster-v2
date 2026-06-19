@@ -45,6 +45,9 @@ type Container struct {
 	IPv4                string `json:"ipv4"`
 	VSatelliteInstalled bool   `json:"vsatelliteInstalled"`
 	VSatelliteStatus    string `json:"vsatelliteStatus,omitempty"`
+	TenantURL           string `json:"tenantUrl,omitempty"`
+	CompanyID           string `json:"companyId,omitempty"`
+	OrganizationID      string `json:"organizationId,omitempty"`
 }
 
 // rawContainer mirrors the subset of `lxc list --format json` we parse.

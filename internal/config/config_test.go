@@ -46,6 +46,32 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveLoadContainerMetadata(t *testing.T) {
+	store := NewStore(t.TempDir())
+	cfg := &Config{
+		PasswordHash:  "h",
+		SessionSecret: []byte("0123456789abcdef0123456789abcdef"),
+		ContainerMetadata: map[string]ContainerMetadata{
+			"vsat-a": {
+				TenantURL:      "https://demo.venafi.cloud",
+				CompanyID:      "demo",
+				OrganizationID: "org-1",
+			},
+		},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	meta := got.ContainerMetadata["vsat-a"]
+	if meta.TenantURL != "https://demo.venafi.cloud" || meta.CompanyID != "demo" || meta.OrganizationID != "org-1" {
+		t.Fatalf("metadata did not round trip: %+v", meta)
+	}
+}
+
 func TestConfigEncryptedAtRest(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
