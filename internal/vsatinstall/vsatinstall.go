@@ -324,9 +324,6 @@ func InstallNGTS(ctx context.Context, opts InstallOpts) (*InstallResult, error) 
 		return nil, err
 	}
 	installAPIURL := ngtsInstallAPIURL(tsgID)
-	if err := preflightVSatellite(ctx, opts.Runner, container, installAPIURL); err != nil {
-		return nil, err
-	}
 	if err := installVSatellite(ctx, opts.Runner, container, installAPIURL, pairingCode); err != nil {
 		return nil, err
 	}
@@ -518,12 +515,6 @@ func installVSatellite(ctx context.Context, runner Runner, container, apiURL, pa
 		shellQuote(apiURL),
 		shellQuote(pairingCode),
 	)
-	_, err := runner.Exec(ctx, container, cmd)
-	return err
-}
-
-func preflightVSatellite(ctx context.Context, runner Runner, container, apiURL string) error {
-	cmd := fmt.Sprintf("export TERM=xterm-256color; /tmp/vsatctl preflight --api-url %s", shellQuote(apiURL))
 	_, err := runner.Exec(ctx, container, cmd)
 	return err
 }
