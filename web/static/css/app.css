@@ -118,6 +118,7 @@ body {
 .install-fields input:focus,
 .install-creds input:focus { outline: none; border-bottom-color: var(--primary); }
 .install-cred-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.install-cred-full { grid-column: 1 / -1; }
 .install-cred-split[hidden],
 .install-cred-single[hidden],
 .install-url[hidden],

@@ -60,7 +60,7 @@
               <p class="muted">{{if .TenantURL}}{{.TenantURL}}{{else}}Tenant details were not captured during install.{{end}}</p>
             </div>
             {{else}}
-            <form class="install-panel-inner" method="post" action="/containers/{{.Name}}/install" onsubmit="return confirmInstall(event, '{{.Name}}')">
+            <form class="install-panel-inner" method="post" action="/containers/{{.Name}}/install" autocomplete="on" onsubmit="return confirmInstall(event, '{{.Name}}')">
               <input type="hidden" name="protocol" value="ccm">
               <div class="install-protocols">
                 <label class="radio-row">
@@ -75,13 +75,13 @@
                 </label>
               </div>
               <div class="install-fields">
-                <input type="text" class="install-url" name="api_endpoint_url" placeholder="Customer Tenant URL" autocomplete="off" hidden>
+                <input type="text" class="install-url" name="api_endpoint_url" placeholder="Customer Tenant URL" autocomplete="on" hidden>
                 <div class="install-creds">
-                  <input type="text" class="install-cred-single" name="api_key" placeholder="API Key" autocomplete="off" required>
+                  <input type="text" class="install-cred-single" name="api_key" placeholder="API Key" autocomplete="on" required>
                   <div class="install-cred-split" hidden>
-                    <input type="text" name="tsg_id" placeholder="TSG ID" autocomplete="off">
-                    <input type="text" name="client_id" placeholder="Client ID" autocomplete="off">
-                    <input type="password" name="client_secret" placeholder="Client Secret" autocomplete="off">
+                    <input type="text" class="install-cred-full" name="client_id" placeholder="Client ID" autocomplete="on">
+                    <input type="text" name="tsg_id" placeholder="TSG ID" autocomplete="on">
+                    <input type="password" name="client_secret" placeholder="Client Secret" autocomplete="on">
                   </div>
                 </div>
                 <div class="install-error alert alert-error" hidden></div>
