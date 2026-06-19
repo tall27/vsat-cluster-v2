@@ -43,15 +43,21 @@ type Config struct {
 	InstancePrefix string `json:"instancePrefix"`
 	// MaxContainers caps how many VSAT containers may exist at once.
 	MaxContainers int `json:"maxContainers"`
-	// ContainerMetadata stores non-secret display metadata by container name.
+	// ContainerMetadata stores per-container display metadata and encrypted CCM
+	// cleanup credentials by container name.
 	ContainerMetadata map[string]ContainerMetadata `json:"containerMetadata,omitempty"`
 }
 
-// ContainerMetadata is non-secret metadata captured after successful installs.
+// ContainerMetadata is captured after successful installs. The config file is
+// encrypted at rest; APIKey is stored only so remove can clean up the tenant.
 type ContainerMetadata struct {
 	TenantURL      string `json:"tenantUrl,omitempty"`
 	CompanyID      string `json:"companyId,omitempty"`
 	OrganizationID string `json:"organizationId,omitempty"`
+	APIBaseURL     string `json:"apiBaseUrl,omitempty"`
+	APIKey         string `json:"apiKey,omitempty"`
+	EdgeInstanceID string `json:"edgeInstanceId,omitempty"`
+	PairingCodeID  string `json:"pairingCodeId,omitempty"`
 }
 
 // Store reads and writes the encrypted config within a directory.

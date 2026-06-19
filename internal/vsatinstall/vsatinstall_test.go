@@ -3,6 +3,7 @@ package vsatinstall
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,11 +14,15 @@ import (
 type fakeRunner struct {
 	container string
 	scripts   []string
+	err       error
 }
 
 func (f *fakeRunner) Exec(_ context.Context, name, script string) ([]byte, error) {
 	f.container = name
 	f.scripts = append(f.scripts, script)
+	if f.err != nil {
+		return nil, f.err
+	}
 	return []byte("ok"), nil
 }
 
@@ -85,7 +90,8 @@ func TestInstallCCMCreatesPairingCodeAndRunsVSatctl(t *testing.T) {
 	if result.PairingCode != "pair-123" || result.EdgeStatus != "active" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if result.TenantURL != "https://demo.venafi.cloud" || result.CompanyID != "demo" || result.OrganizationID != "org-1" {
+	if result.TenantURL != "https://demo.venafi.cloud" || result.CompanyID != "demo" || result.OrganizationID != "org-1" ||
+		result.APIBaseURL == "" || result.APIKey != "secret-key" || result.EdgeInstanceID != "edge-1" || result.PairingCodeID != "pair-id-1" {
 		t.Fatalf("unexpected tenant metadata: %+v", result)
 	}
 	if len(runner.scripts) != 2 {
@@ -99,6 +105,45 @@ func TestInstallCCMCreatesPairingCodeAndRunsVSatctl(t *testing.T) {
 	}
 	if strings.Contains(runner.scripts[1], "--api-url "+server.URL+"/ ") {
 		t.Fatalf("install script should pass api-url without trailing slash: %s", runner.scripts[1])
+	}
+}
+
+func TestInstallCCMReportsTenantMetadataBeforeInstallFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/environments":
+			json.NewEncoder(w).Encode(map[string]any{"environments": []map[string]string{{"id": "env-1"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/useraccounts":
+			json.NewEncoder(w).Encode(map[string]any{"company": map[string]string{"urlPrefix": "demo", "organizationId": "org-1"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/edgeinstances":
+			json.NewEncoder(w).Encode(map[string]any{"edgeInstances": []map[string]string{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/pairingcodes/satellite":
+			json.NewEncoder(w).Encode(map[string]string{"id": "pair-id-1", "pairingCode": "pair-123"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var captured InstallResult
+	_, err := InstallCCM(context.Background(), InstallOpts{
+		Container:    "vsat-a",
+		APIKey:       "secret-key",
+		HTTPClient:   server.Client(),
+		RegionBases:  []string{server.URL},
+		Runner:       &fakeRunner{err: errors.New("install interrupted")},
+		PollInterval: time.Millisecond,
+		PollTimeout:  time.Second,
+		OnTenantMetadata: func(meta InstallResult) {
+			captured = meta
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "install interrupted") {
+		t.Fatalf("expected install failure, got %v", err)
+	}
+	if captured.TenantURL != "https://demo.venafi.cloud" || captured.CompanyID != "demo" || captured.OrganizationID != "org-1" ||
+		captured.APIBaseURL == "" || captured.APIKey != "secret-key" || captured.PairingCodeID != "pair-id-1" {
+		t.Fatalf("tenant metadata should be reported before install failure, got %+v", captured)
 	}
 }
 

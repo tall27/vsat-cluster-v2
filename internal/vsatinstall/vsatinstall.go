@@ -29,26 +29,31 @@ type Runner interface {
 
 // InstallOpts configures a VSatellite install.
 type InstallOpts struct {
-	Container       string
-	Protocol        string
-	APIEndpointURL  string
-	APIKey          string
-	TenantID        string
-	SecretSignature string
-	Runner          Runner
-	HTTPClient      *http.Client
-	RegionBases     []string
-	PollInterval    time.Duration
-	PollTimeout     time.Duration
+	Container        string
+	Protocol         string
+	APIEndpointURL   string
+	APIKey           string
+	TenantID         string
+	SecretSignature  string
+	Runner           Runner
+	HTTPClient       *http.Client
+	RegionBases      []string
+	PollInterval     time.Duration
+	PollTimeout      time.Duration
+	OnTenantMetadata func(InstallResult)
 }
 
 // InstallResult is returned to the web UI after a successful install.
 type InstallResult struct {
 	PairingCode    string `json:"pairingCode,omitempty"`
+	PairingCodeID  string `json:"pairingCodeId,omitempty"`
 	EdgeStatus     string `json:"edgeStatus,omitempty"`
 	TenantURL      string `json:"tenantUrl,omitempty"`
 	CompanyID      string `json:"companyId,omitempty"`
 	OrganizationID string `json:"organizationId,omitempty"`
+	APIBaseURL     string `json:"apiBaseUrl,omitempty"`
+	APIKey         string `json:"apiKey,omitempty"`
+	EdgeInstanceID string `json:"edgeInstanceId,omitempty"`
 }
 
 type tenantMetadata struct {
@@ -91,12 +96,31 @@ func InstallCCM(ctx context.Context, opts InstallOpts) (*InstallResult, error) {
 		return nil, err
 	}
 	tenant, _ := fetchTenantMetadata(ctx, client, base, apiKey)
+	if opts.OnTenantMetadata != nil && (tenant.TenantURL != "" || tenant.CompanyID != "" || tenant.OrganizationID != "") {
+		opts.OnTenantMetadata(InstallResult{
+			TenantURL:      tenant.TenantURL,
+			CompanyID:      tenant.CompanyID,
+			OrganizationID: tenant.OrganizationID,
+			APIBaseURL:     base,
+			APIKey:         apiKey,
+		})
+	}
 	if err := deleteStaleEdgeInstances(ctx, client, base, apiKey, environmentID); err != nil {
 		return nil, err
 	}
 	pairingCode, pairingCodeID, err := createPairingCode(ctx, client, base, apiKey, environmentID)
 	if err != nil {
 		return nil, err
+	}
+	if opts.OnTenantMetadata != nil {
+		opts.OnTenantMetadata(InstallResult{
+			TenantURL:      tenant.TenantURL,
+			CompanyID:      tenant.CompanyID,
+			OrganizationID: tenant.OrganizationID,
+			APIBaseURL:     base,
+			APIKey:         apiKey,
+			PairingCodeID:  pairingCodeID,
+		})
 	}
 	if err := ensureVSatctl(ctx, opts.Runner, container); err != nil {
 		return nil, err
@@ -108,15 +132,20 @@ func InstallCCM(ctx context.Context, opts InstallOpts) (*InstallResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := renameEdgeInstance(ctx, client, base, apiKey, pairingCodeID, container); err != nil {
+	edgeInstanceID, err := renameEdgeInstance(ctx, client, base, apiKey, pairingCodeID, container)
+	if err != nil {
 		return nil, err
 	}
 	return &InstallResult{
 		PairingCode:    pairingCode,
+		PairingCodeID:  pairingCodeID,
 		EdgeStatus:     status,
 		TenantURL:      tenant.TenantURL,
 		CompanyID:      tenant.CompanyID,
 		OrganizationID: tenant.OrganizationID,
+		APIBaseURL:     base,
+		APIKey:         apiKey,
+		EdgeInstanceID: edgeInstanceID,
 	}, nil
 }
 
@@ -326,21 +355,58 @@ func fetchEdgeStatus(ctx context.Context, client *http.Client, base, apiKey, pai
 	return "", errors.New("edge instance not found")
 }
 
-func renameEdgeInstance(ctx context.Context, client *http.Client, base, apiKey, pairingCodeID, name string) error {
+// DeleteEdgeInstance removes a registered VSatellite from TLS Protect Cloud.
+func DeleteEdgeInstance(ctx context.Context, client *http.Client, base, apiKey, edgeInstanceID, pairingCodeID, name string) error {
+	base = normalizeBase(base)
+	apiKey = strings.TrimSpace(apiKey)
+	edgeInstanceID = strings.TrimSpace(edgeInstanceID)
+	pairingCodeID = strings.TrimSpace(pairingCodeID)
+	name = strings.TrimSpace(name)
+	if base == "" || apiKey == "" {
+		return nil
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	if edgeInstanceID == "" {
+		instances, err := listEdgeInstances(ctx, client, base, apiKey)
+		if err != nil {
+			return err
+		}
+		for _, inst := range instances {
+			switch {
+			case pairingCodeID != "" && inst.PairingCodeID == pairingCodeID:
+				edgeInstanceID = strings.TrimSpace(inst.ID)
+			case name != "" && inst.Name == name:
+				edgeInstanceID = strings.TrimSpace(inst.ID)
+			}
+			if edgeInstanceID != "" {
+				break
+			}
+		}
+	}
+	if edgeInstanceID == "" {
+		return nil
+	}
+	return doJSON(ctx, client, http.MethodDelete, base+"v1/edgeinstances/"+edgeInstanceID, apiKey, nil, nil)
+}
+
+func renameEdgeInstance(ctx context.Context, client *http.Client, base, apiKey, pairingCodeID, name string) (string, error) {
 	instances, err := listEdgeInstances(ctx, client, base, apiKey)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, inst := range instances {
 		if inst.PairingCodeID != pairingCodeID || strings.TrimSpace(inst.ID) == "" {
 			continue
 		}
+		id := strings.TrimSpace(inst.ID)
 		body := struct {
 			Name string `json:"name"`
 		}{Name: name}
-		return doJSON(ctx, client, http.MethodPut, base+"v1/edgeinstances/"+inst.ID, apiKey, body, nil)
+		return id, doJSON(ctx, client, http.MethodPut, base+"v1/edgeinstances/"+id, apiKey, body, nil)
 	}
-	return errors.New("edge instance not found")
+	return "", errors.New("edge instance not found")
 }
 
 func listEdgeInstances(ctx context.Context, client *http.Client, base, apiKey string) ([]edgeInstance, error) {

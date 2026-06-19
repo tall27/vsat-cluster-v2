@@ -56,6 +56,10 @@ func TestSaveLoadContainerMetadata(t *testing.T) {
 				TenantURL:      "https://demo.venafi.cloud",
 				CompanyID:      "demo",
 				OrganizationID: "org-1",
+				APIBaseURL:     "https://api.venafi.cloud/",
+				APIKey:         "secret-key",
+				EdgeInstanceID: "edge-1",
+				PairingCodeID:  "pair-1",
 			},
 		},
 	}
@@ -67,7 +71,9 @@ func TestSaveLoadContainerMetadata(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	meta := got.ContainerMetadata["vsat-a"]
-	if meta.TenantURL != "https://demo.venafi.cloud" || meta.CompanyID != "demo" || meta.OrganizationID != "org-1" {
+	if meta.TenantURL != "https://demo.venafi.cloud" || meta.CompanyID != "demo" || meta.OrganizationID != "org-1" ||
+		meta.APIBaseURL != "https://api.venafi.cloud/" || meta.APIKey != "secret-key" || meta.EdgeInstanceID != "edge-1" ||
+		meta.PairingCodeID != "pair-1" {
 		t.Fatalf("metadata did not round trip: %+v", meta)
 	}
 }

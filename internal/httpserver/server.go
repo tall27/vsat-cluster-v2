@@ -33,19 +33,21 @@ type Options struct {
 	Logger        *log.Logger
 	Metrics       *metrics.Collector
 	Version       string // build-time git SHA, shown as watermark
+	HTTPClient    *http.Client
 }
 
 // Server holds runtime state and handlers.
 type Server struct {
-	store    *config.Store
-	lxd      *lxdctl.Client
-	tmpl     *templates
-	term     *webterm.Handler
-	metrics  *metrics.Collector
-	host     string
-	version  string
-	secureCk bool
-	logger   *log.Logger
+	store      *config.Store
+	lxd        *lxdctl.Client
+	tmpl       *templates
+	term       *webterm.Handler
+	metrics    *metrics.Collector
+	host       string
+	version    string
+	secureCk   bool
+	logger     *log.Logger
+	httpClient *http.Client
 
 	imageReady atomic.Bool
 
@@ -65,16 +67,20 @@ func New(opts Options) (*Server, error) {
 		lxcBin = "lxc"
 	}
 	s := &Server{
-		store:    opts.Store,
-		lxd:      opts.LXD,
-		tmpl:     tmpl,
-		host:     opts.Host,
-		version:  opts.Version,
-		secureCk: opts.SecureCookies,
-		logger:   opts.Logger,
+		store:      opts.Store,
+		lxd:        opts.LXD,
+		tmpl:       tmpl,
+		host:       opts.Host,
+		version:    opts.Version,
+		secureCk:   opts.SecureCookies,
+		logger:     opts.Logger,
+		httpClient: opts.HTTPClient,
 	}
 	if s.logger == nil {
 		s.logger = log.Default()
+	}
+	if s.httpClient == nil {
+		s.httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
 	s.term = webterm.NewHandler(func(ctx context.Context, container string) *exec.Cmd {
 		args := s.lxd.ShellArgs(container)

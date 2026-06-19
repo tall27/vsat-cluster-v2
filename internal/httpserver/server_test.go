@@ -309,6 +309,85 @@ func TestRemoveUninstallsBeforeDeletingContainer(t *testing.T) {
 	}
 }
 
+func TestRemoveDeletesTenantEdgeInstanceBeforeContainer(t *testing.T) {
+	var deletedPath string
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("tppl-api-key") != "secret-key" {
+			t.Fatalf("expected API key header, got %q", r.Header.Get("tppl-api-key"))
+		}
+		if r.Method != http.MethodDelete {
+			t.Fatalf("expected DELETE, got %s", r.Method)
+		}
+		deletedPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer tenant.Close()
+
+	runner := &recordingRunner{listJSON: `[{"name":"vsat-a","status":"Running","state":{"network":{}}}]`}
+	srv := newTestServerWithRunner(t, runner)
+	srv.httpClient = tenant.Client()
+	cookies := setupSessionRequest(t, srv)
+	cfg := srv.currentConfig()
+	cfg.ContainerMetadata = map[string]config.ContainerMetadata{
+		"vsat-a": {APIBaseURL: tenant.URL, APIKey: "secret-key", EdgeInstanceID: "edge-1"},
+	}
+	if err := srv.store.Save(cfg); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	srv.applyConfig(cfg)
+
+	req := postForm("/containers/vsat-a/delete", nil)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after remove, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if deletedPath != "/v1/edgeinstances/edge-1" {
+		t.Fatalf("expected tenant edge delete, got %q", deletedPath)
+	}
+}
+
+func TestRemoveBlocksContainerDeleteWhenTenantCleanupFails(t *testing.T) {
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusForbidden)
+	}))
+	defer tenant.Close()
+
+	runner := &recordingRunner{listJSON: `[{"name":"vsat-a","status":"Running","state":{"network":{}}}]`}
+	srv := newTestServerWithRunner(t, runner)
+	srv.httpClient = tenant.Client()
+	cookies := setupSessionRequest(t, srv)
+	cfg := srv.currentConfig()
+	cfg.ContainerMetadata = map[string]config.ContainerMetadata{
+		"vsat-a": {APIBaseURL: tenant.URL, APIKey: "secret-key", EdgeInstanceID: "edge-1"},
+	}
+	if err := srv.store.Save(cfg); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	srv.applyConfig(cfg)
+
+	req := postForm("/containers/vsat-a/delete", nil)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected dashboard render on tenant cleanup failure, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Could not delete VSatellite from tenant") {
+		t.Fatalf("expected tenant cleanup error, got %q", rec.Body.String())
+	}
+	for _, call := range runner.snapshot() {
+		if len(call) == 3 && call[0] == "delete" && call[1] == "--force" && call[2] == "vsat-a" {
+			t.Fatalf("container delete should not run after tenant cleanup failure, calls: %+v", runner.snapshot())
+		}
+	}
+}
+
 func TestRemoveBlocksContainerDeleteWhenUninstallFails(t *testing.T) {
 	runner := &recordingRunner{
 		listJSON:   `[{"name":"vsat-a","status":"Running","state":{"network":{}}}]`,

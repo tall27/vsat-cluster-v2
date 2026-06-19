@@ -193,6 +193,10 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		s.renderRemoveError(w, r, "Could not uninstall VSatellite before removing container: "+err.Error())
 		return
 	}
+	if err := s.deleteTenantEdgeInstance(r.Context(), name); err != nil {
+		s.renderRemoveError(w, r, "Could not delete VSatellite from tenant: "+err.Error())
+		return
+	}
 	if err := s.lxd.Remove(r.Context(), name); err != nil {
 		s.renderRemoveError(w, r, "Could not remove container: "+err.Error())
 		return
@@ -225,11 +229,13 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := vsatinstall.InstallCCM(r.Context(), vsatinstall.InstallOpts{
-		Container:      name,
-		Protocol:       protocol,
-		APIEndpointURL: r.FormValue("api_endpoint_url"),
-		APIKey:         r.FormValue("api_key"),
-		Runner:         s.lxd,
+		Container:        name,
+		Protocol:         protocol,
+		APIEndpointURL:   r.FormValue("api_endpoint_url"),
+		APIKey:           r.FormValue("api_key"),
+		Runner:           s.lxd,
+		HTTPClient:       s.httpClient,
+		OnTenantMetadata: func(meta vsatinstall.InstallResult) { s.saveContainerMetadata(name, &meta) },
 	})
 	if err != nil {
 		s.logger.Printf("install %s: %v", name, err)
@@ -268,6 +274,10 @@ func (s *Server) saveContainerMetadata(name string, result *vsatinstall.InstallR
 			TenantURL:      result.TenantURL,
 			CompanyID:      result.CompanyID,
 			OrganizationID: result.OrganizationID,
+			APIBaseURL:     result.APIBaseURL,
+			APIKey:         result.APIKey,
+			EdgeInstanceID: result.EdgeInstanceID,
+			PairingCodeID:  result.PairingCodeID,
 		}
 	}
 	var err error
@@ -294,6 +304,16 @@ func (s *Server) removeContainerMetadata(name string) {
 	if err != nil {
 		s.logger.Printf("remove tenant metadata %s: %v", name, err)
 	}
+}
+
+func (s *Server) deleteTenantEdgeInstance(ctx context.Context, name string) error {
+	s.mu.RLock()
+	var meta config.ContainerMetadata
+	if s.cfg != nil {
+		meta = s.cfg.ContainerMetadata[name]
+	}
+	s.mu.RUnlock()
+	return vsatinstall.DeleteEdgeInstance(ctx, s.httpClient, meta.APIBaseURL, meta.APIKey, meta.EdgeInstanceID, meta.PairingCodeID, name)
 }
 
 func writeInstallJSON(w http.ResponseWriter, code int, status, message string) {
