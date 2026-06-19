@@ -45,7 +45,7 @@ body {
 .muted { color: var(--muted); margin: 2px 0 0; font-size: 13px; }
 
 /* buttons */
-.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 8px 14px; font-size: 14px; cursor: pointer; text-decoration: none; transition: background .12s, border-color .12s; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 8px 14px; font-family: inherit; font-size: 14px; line-height: 1.2; cursor: pointer; text-decoration: none; transition: background .12s, border-color .12s; }
 .btn:hover { background: #f0f2f5; }
 .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn-primary:hover { background: var(--primary-d); }
@@ -54,8 +54,8 @@ body {
 .btn-ghost:hover { background: #f0f2f5; }
 .btn-danger { color: var(--danger); border-color: #f0c8c8; }
 .btn-danger:hover { background: #fdeaea; }
-.btn-small { padding: 5px 10px; font-size: 13px; }
-.inline { display: inline; margin: 0; }
+.btn-small { height: 32px; padding: 0 10px; font-size: 13px; }
+.inline { display: inline-flex; align-items: center; margin: 0; }
 .icon { width: 15px; height: 15px; stroke: currentColor; fill: none; vertical-align: middle; }
 .icon-metric { width: 13px; height: 13px; margin-right: 6px; }
 .icon-inline { width: 16px; height: 16px; margin-right: 6px; }
