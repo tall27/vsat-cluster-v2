@@ -37,8 +37,8 @@ Parameters:
 
   AdminCidr:
     Type: String
-    Description: CIDR allowed for direct SSH. Default disables public SSH; use your public IP/32 when direct SSH is needed.
-    Default: 127.0.0.1/32
+    Description: Deployer public IP CIDR for SSH.
+    Default: 0.0.0.0/0
     AllowedPattern: '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[1-2][0-9]|3[0-2])$'
 
   InstanceType:
@@ -119,15 +119,10 @@ Outputs:
     Description: Public DNS name.
     Value: !GetAtt VsatStack.Outputs.PublicDnsName
   SshCommand:
-    Description: Direct SSH command for the host; requires AdminCidr to allow your source IP.
+    Description: SSH command for the host.
     Value: !Sub
       - 'ssh ubuntu@${DnsName}'
       - DnsName: !GetAtt VsatStack.Outputs.PublicDnsName
-  SshOverSsmCommand:
-    Description: SSH command through SSM Session Manager; does not require public SSH ingress.
-    Value: !Sub
-      - 'ssh -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile AdministratorAccess-427380916706 --region ${AWS::Region}" ubuntu@${InstanceId}'
-      - InstanceId: !GetAtt VsatStack.Outputs.InstanceId
   HealthUrl:
     Description: VSAT Cluster health endpoint.
     Value: !Sub

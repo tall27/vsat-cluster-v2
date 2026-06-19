@@ -40,7 +40,7 @@ aws cloudformation create-stack \
   --template-url https://akush.s3.us-east-2.amazonaws.com/vsat-cluster/mainstack.yaml \
   --parameters \
     ParameterKey=CustomerName,ParameterValue=vsat-cow-<suffix> \
-    ParameterKey=AdminCidr,ParameterValue=<your-public-ip>/32 \
+    ParameterKey=AdminCidr,ParameterValue=0.0.0.0/0 \
     ParameterKey=KeyName,ParameterValue=talk-vnfi-Ohio \
     ParameterKey=InstanceType,ParameterValue=t3a.xlarge \
     ParameterKey=RootVolumeSizeGiB,ParameterValue=8 \
@@ -51,10 +51,6 @@ aws cloudformation create-stack \
   --profile AdministratorAccess-427380916706 \
   --region us-east-2
 ```
-
-Use the `SshOverSsmCommand` stack output for SSH through Session Manager when
-direct port 22 should remain closed. It uses the EC2 instance ID as the SSH host
-and `AWS-StartSSHSession` as the proxy command.
 
 ## Check Stack
 

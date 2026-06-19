@@ -30,65 +30,12 @@ Parameters:
     Default: 125
 
 Resources:
-  VsatInstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - SA_Launch_POC_Guacamole_EC2_Role
-
-  VsatInstanceAccessPolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      PolicyName: !Sub '${AWS::StackName}-vsat-instance-access'
-      Roles:
-        - SA_Launch_POC_Guacamole_EC2_Role
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - ssm:UpdateInstanceInformation
-            Resource: '*'
-          - Effect: Allow
-            Action:
-              - ssmmessages:CreateControlChannel
-              - ssmmessages:CreateDataChannel
-              - ssmmessages:OpenControlChannel
-              - ssmmessages:OpenDataChannel
-            Resource: '*'
-          - Effect: Allow
-            Action:
-              - ec2messages:AcknowledgeMessage
-              - ec2messages:DeleteMessage
-              - ec2messages:FailMessage
-              - ec2messages:GetEndpoint
-              - ec2messages:GetMessages
-              - ec2messages:SendReply
-            Resource: '*'
-          - Effect: Allow
-            Action:
-              - s3:ListBucket
-            Resource:
-              - arn:aws:s3:::akush
-            Condition:
-              StringLike:
-                s3:prefix:
-                  - vsat-cluster/*
-                  - vsat-cluster/
-          - Effect: Allow
-            Action:
-              - s3:GetObject
-            Resource:
-              - arn:aws:s3:::akush/vsat-cluster/*
-
   VsatInstance:
     Type: AWS::EC2::Instance
-    DependsOn: VsatInstanceAccessPolicy
     Properties:
       ImageId: !Ref UbuntuAmi
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
-      IamInstanceProfile: !Ref VsatInstanceProfile
       SourceDestCheck: false
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
