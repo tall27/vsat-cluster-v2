@@ -49,7 +49,6 @@ Resources:
             VolumeSize: !Ref CowVolumeSizeGiB
             VolumeType: gp3
             Iops: !Ref CowVolumeIops
-            Throughput: !Ref CowVolumeThroughput
             DeleteOnTermination: true
             Encrypted: true
       NetworkInterfaces:

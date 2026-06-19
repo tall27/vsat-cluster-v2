@@ -184,7 +184,6 @@ Resources:
             VolumeType: gp3
             VolumeSize: !Ref RootVolumeSizeGiB
             Iops: !Ref RootVolumeIops
-            Throughput: !Ref RootVolumeThroughput
             DeleteOnTermination: true
             Encrypted: true
         - DeviceName: !Ref CowVolumeDeviceName
@@ -192,7 +191,6 @@ Resources:
             VolumeType: gp3
             VolumeSize: !Ref CowVolumeSizeGiB
             Iops: !Ref CowVolumeIops
-            Throughput: !Ref CowVolumeThroughput
             DeleteOnTermination: true
             Encrypted: true
       NetworkInterfaces:
