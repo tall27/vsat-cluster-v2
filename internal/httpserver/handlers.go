@@ -243,7 +243,6 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		result, err = vsatinstall.InstallNGTS(r.Context(), vsatinstall.InstallOpts{
 			Container:        name,
 			Protocol:         protocol,
-			APIEndpointURL:   r.FormValue("api_endpoint_url"),
 			ClientID:         r.FormValue("client_id"),
 			ClientSecret:     r.FormValue("client_secret"),
 			TSGID:            r.FormValue("tsg_id"),
