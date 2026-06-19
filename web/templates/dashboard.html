@@ -78,16 +78,20 @@
     var splitInputs = split.querySelectorAll('input');
     if (hiddenProtocol) hiddenProtocol.value = protocol;
     if (protocol === 'ngts') {
-      url.hidden = true;
-      url.required = false;
+      if (url) {
+        url.hidden = true;
+        url.required = false;
+      }
       single.hidden = true;
       single.required = false;
       split.hidden = false;
       splitInputs.forEach(function (i) { i.required = true; });
     } else {
-      url.placeholder = 'Customer Tenant URL';
-      url.hidden = true;
-      url.required = false;
+      if (url) {
+        url.placeholder = 'Customer Tenant URL';
+        url.hidden = true;
+        url.required = false;
+      }
       single.hidden = false;
       single.required = true;
       split.hidden = true;
