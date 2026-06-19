@@ -251,9 +251,15 @@ func TestInstallNGTSUsesOAuthAndTSGScopedInstallURL(t *testing.T) {
 	if !strings.Contains(runner.scripts[1], "preflight --api-url https://1926383011.ngts.paloaltonetworks.com") {
 		t.Fatalf("preflight script missing TSG-scoped api-url: %s", runner.scripts[1])
 	}
+	if !strings.Contains(runner.scripts[1], "export TERM=xterm-256color") {
+		t.Fatalf("preflight script should set TERM for vsatctl: %s", runner.scripts[1])
+	}
 	if !strings.Contains(runner.scripts[2], "--api-url https://1926383011.ngts.paloaltonetworks.com") ||
 		!strings.Contains(runner.scripts[2], "--pairing-code pair-123") {
 		t.Fatalf("install script missing NGTS install inputs: %s", runner.scripts[2])
+	}
+	if !strings.Contains(runner.scripts[2], "export TERM=xterm-256color") {
+		t.Fatalf("install script should set TERM for vsatctl: %s", runner.scripts[2])
 	}
 }
 

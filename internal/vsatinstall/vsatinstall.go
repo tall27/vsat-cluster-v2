@@ -514,7 +514,7 @@ yes | /tmp/vsatctl uninstall --silent --install-dir /opt/vsatellite`
 
 func installVSatellite(ctx context.Context, runner Runner, container, apiURL, pairingCode string) error {
 	cmd := fmt.Sprintf(
-		"yes | /tmp/vsatctl install --accept-license-agreement --silent --api-url %s --pairing-code %s --install-dir /opt/vsatellite",
+		"export TERM=xterm-256color; yes | /tmp/vsatctl install --accept-license-agreement --silent --api-url %s --pairing-code %s --install-dir /opt/vsatellite",
 		shellQuote(apiURL),
 		shellQuote(pairingCode),
 	)
@@ -523,7 +523,7 @@ func installVSatellite(ctx context.Context, runner Runner, container, apiURL, pa
 }
 
 func preflightVSatellite(ctx context.Context, runner Runner, container, apiURL string) error {
-	cmd := fmt.Sprintf("/tmp/vsatctl preflight --api-url %s", shellQuote(apiURL))
+	cmd := fmt.Sprintf("export TERM=xterm-256color; /tmp/vsatctl preflight --api-url %s", shellQuote(apiURL))
 	_, err := runner.Exec(ctx, container, cmd)
 	return err
 }
