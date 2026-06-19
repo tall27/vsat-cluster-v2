@@ -51,11 +51,15 @@ type Config struct {
 // ContainerMetadata is captured after successful installs. The config file is
 // encrypted at rest; APIKey is stored only so remove can clean up the tenant.
 type ContainerMetadata struct {
+	Backend        string `json:"backend,omitempty"`
 	TenantURL      string `json:"tenantUrl,omitempty"`
 	CompanyID      string `json:"companyId,omitempty"`
 	OrganizationID string `json:"organizationId,omitempty"`
 	APIBaseURL     string `json:"apiBaseUrl,omitempty"`
 	APIKey         string `json:"apiKey,omitempty"`
+	ClientID       string `json:"clientId,omitempty"`
+	ClientSecret   string `json:"clientSecret,omitempty"`
+	TSGID          string `json:"tsgId,omitempty"`
 	EdgeInstanceID string `json:"edgeInstanceId,omitempty"`
 	PairingCodeID  string `json:"pairingCodeId,omitempty"`
 }

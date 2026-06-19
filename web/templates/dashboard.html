@@ -78,9 +78,9 @@
     var splitInputs = split.querySelectorAll('input');
     if (hiddenProtocol) hiddenProtocol.value = protocol;
     if (protocol === 'ngts') {
-      url.placeholder = 'Customer Tenant URL';
+      url.placeholder = 'NGTS REST API base (optional)';
       url.hidden = false;
-      url.required = true;
+      url.required = false;
       single.hidden = true;
       single.required = false;
       split.hidden = false;

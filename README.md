@@ -23,6 +23,8 @@ through the host's single public IP.
   Netdata/Prometheus/Grafana — and renders with plain HTML/CSS bars, so nothing new
   is vendored. See [docs/architecture.md](docs/architecture.md#monitoring).
 - **Auth** — one static password (bcrypt-hashed), HMAC-signed session cookie, HTTPS.
+- **VSatellite install** — supports both TLS Protect Cloud / CCM API-key installs
+  and NGTS installs with SCM service-account credentials.
 
 > **Out of scope for this drop:** Route 53 DNS sync. See
 > [docs/architecture.md](docs/architecture.md#backlog).
@@ -92,6 +94,23 @@ sudo ./scripts/install.sh ./vsat-webapp
 Then browse to `https://<host>/`, set the admin password on first run, and start
 adding containers. See [docs/deployment.md](docs/deployment.md) for details,
 including running as a non-root user with `--sudo`.
+
+### VSatellite install backends
+
+The dashboard install panel supports two backend protocols:
+
+- `CCM Protocol`: provide the TLS Protect Cloud API key. The app discovers the
+  correct Venafi API region, creates a pairing code, downloads
+  `https://dl.venafi.cloud/vsatctl`, and installs with the matching cloud API URL.
+- `NGTS System`: provide the tenant TSG ID, SCM service-account Client ID, and
+  Client Secret. The app mints an OAuth bearer token with
+  `scope=tsg_id:<TSG_ID>`, calls `https://api.strata.paloaltonetworks.com/ngts/`
+  to create the pairing code, downloads
+  `https://dl.ngts.paloaltonetworks.com/vsatctl`, runs preflight, and installs
+  against `https://<TSG_ID>.ngts.paloaltonetworks.com`.
+
+The optional NGTS REST API base field is only for overrides; leave it blank for
+the normal Strata shared control-plane endpoint.
 
 ### Quick manual run (no systemd)
 

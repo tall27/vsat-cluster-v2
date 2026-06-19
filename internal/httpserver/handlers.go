@@ -222,21 +222,39 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	protocol := strings.TrimSpace(r.FormValue("protocol"))
 	if protocol == "" {
-		protocol = "ccm"
+		protocol = vsatinstall.BackendCCM
 	}
-	if protocol != "ccm" {
-		writeInstallJSON(w, http.StatusBadRequest, "error", "NGTS install is not available yet.")
+	var (
+		result *vsatinstall.InstallResult
+		err    error
+	)
+	switch protocol {
+	case vsatinstall.BackendCCM:
+		result, err = vsatinstall.InstallCCM(r.Context(), vsatinstall.InstallOpts{
+			Container:        name,
+			Protocol:         protocol,
+			APIEndpointURL:   r.FormValue("api_endpoint_url"),
+			APIKey:           r.FormValue("api_key"),
+			Runner:           s.lxd,
+			HTTPClient:       s.httpClient,
+			OnTenantMetadata: func(meta vsatinstall.InstallResult) { s.saveContainerMetadata(name, &meta) },
+		})
+	case vsatinstall.BackendNGTS:
+		result, err = vsatinstall.InstallNGTS(r.Context(), vsatinstall.InstallOpts{
+			Container:        name,
+			Protocol:         protocol,
+			APIEndpointURL:   r.FormValue("api_endpoint_url"),
+			ClientID:         r.FormValue("client_id"),
+			ClientSecret:     r.FormValue("client_secret"),
+			TSGID:            r.FormValue("tsg_id"),
+			Runner:           s.lxd,
+			HTTPClient:       s.httpClient,
+			OnTenantMetadata: func(meta vsatinstall.InstallResult) { s.saveContainerMetadata(name, &meta) },
+		})
+	default:
+		writeInstallJSON(w, http.StatusBadRequest, "error", "Unsupported install protocol.")
 		return
 	}
-	result, err := vsatinstall.InstallCCM(r.Context(), vsatinstall.InstallOpts{
-		Container:        name,
-		Protocol:         protocol,
-		APIEndpointURL:   r.FormValue("api_endpoint_url"),
-		APIKey:           r.FormValue("api_key"),
-		Runner:           s.lxd,
-		HTTPClient:       s.httpClient,
-		OnTenantMetadata: func(meta vsatinstall.InstallResult) { s.saveContainerMetadata(name, &meta) },
-	})
 	if err != nil {
 		s.logger.Printf("install %s: %v", name, err)
 		writeInstallJSON(w, http.StatusBadRequest, "error", sanitizeInstallError(err))
@@ -271,11 +289,15 @@ func (s *Server) saveContainerMetadata(name string, result *vsatinstall.InstallR
 			cfg.ContainerMetadata = make(map[string]config.ContainerMetadata)
 		}
 		cfg.ContainerMetadata[name] = config.ContainerMetadata{
+			Backend:        result.Backend,
 			TenantURL:      result.TenantURL,
 			CompanyID:      result.CompanyID,
 			OrganizationID: result.OrganizationID,
 			APIBaseURL:     result.APIBaseURL,
 			APIKey:         result.APIKey,
+			ClientID:       result.ClientID,
+			ClientSecret:   result.ClientSecret,
+			TSGID:          result.TSGID,
 			EdgeInstanceID: result.EdgeInstanceID,
 			PairingCodeID:  result.PairingCodeID,
 		}
@@ -313,6 +335,9 @@ func (s *Server) deleteTenantEdgeInstance(ctx context.Context, name string) erro
 		meta = s.cfg.ContainerMetadata[name]
 	}
 	s.mu.RUnlock()
+	if meta.Backend == vsatinstall.BackendNGTS {
+		return vsatinstall.DeleteNGTSEdgeInstance(ctx, s.httpClient, meta.APIBaseURL, meta.ClientID, meta.ClientSecret, meta.TSGID, meta.EdgeInstanceID, meta.PairingCodeID, name)
+	}
 	return vsatinstall.DeleteEdgeInstance(ctx, s.httpClient, meta.APIBaseURL, meta.APIKey, meta.EdgeInstanceID, meta.PairingCodeID, name)
 }
 
