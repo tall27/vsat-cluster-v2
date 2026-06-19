@@ -10,7 +10,8 @@ The current stack follows the `onebox.v2` nested-stack pattern:
 - `vpcstack.yaml` - fresh VPC, public subnet, internet gateway, route table
 - `sgstack.yaml` - SSH from `AdminCidr`, public HTTPS, internal VPC traffic
 - `vsatstack.yaml` - Ubuntu EC2 instance, 8 GiB root, gp3 COW block device
-  with delete-on-termination enabled, and UserData quickstart
+  with delete-on-termination enabled, SSM Session Manager SSH proxy support,
+  and UserData quickstart
 - `vsat-ubuntu-ec2.yaml` - older standalone template kept for reference
 
 The workload stack launches Ubuntu 24.04, creates the COW gp3 EBS volume as an
@@ -77,4 +78,5 @@ root template. Verification showed:
 ## Outputs
 
 The root stack outputs the instance ID, public IP, public DNS name, raw COW volume
-ID, SSH command, and health URL.
+ID, direct SSH command, SSH-over-SSM command, and health URL. Use
+`SshOverSsmCommand` when port 22 is not open to your current IP.
