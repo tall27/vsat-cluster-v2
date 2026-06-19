@@ -12,6 +12,7 @@ type fakeRunner struct {
 	listJSON string
 	listErr  error
 	calls    [][]string
+	execOut  []byte
 	failOn   string // substring of first arg to fail
 	// kmsgFailures makes the kmsg-fix exec fail this many times before succeeding,
 	// simulating a container whose init isn't ready for `lxc exec` yet.
@@ -30,6 +31,9 @@ func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 	}
 	if len(args) > 0 && args[0] == "list" {
 		return []byte(f.listJSON), f.listErr
+	}
+	if len(args) > 0 && args[0] == "exec" && f.execOut != nil {
+		return f.execOut, nil
 	}
 	return []byte(""), nil
 }
@@ -70,6 +74,21 @@ func TestListSkipsLinkLocalIPv4(t *testing.T) {
 	got, _ := c.List(context.Background())
 	if got[0].IPv4 != "10.0.0.9" {
 		t.Errorf("expected global IPv4, got %q", got[0].IPv4)
+	}
+}
+
+func TestListDetectsRunningVSatellite(t *testing.T) {
+	fr := &fakeRunner{listJSON: twoContainers, execOut: []byte("running\n")}
+	c := New(Options{Runner: fr})
+	got, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !got[0].VSatelliteInstalled || got[0].VSatelliteStatus != "running" {
+		t.Fatalf("expected running VSatellite on first container, got %+v", got[0])
+	}
+	if got[1].VSatelliteInstalled {
+		t.Fatalf("stopped container should not be probed as installed: %+v", got[1])
 	}
 }
 

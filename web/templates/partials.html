@@ -38,10 +38,11 @@
         </form>
         {{if eq .Status "Running"}}
         <button type="button" class="btn btn-small btn-install" id="install-btn-{{.Name}}"
-                data-vsat="{{.Name}}" data-state="ready" onclick="toggleInstall('{{.Name}}')">
+                data-vsat="{{.Name}}" data-state="{{if .VSatelliteInstalled}}status{{else}}ready{{end}}"
+                data-installed="{{.VSatelliteInstalled}}" onclick="toggleInstall('{{.Name}}')">
           <span class="btn-install-icon-ready">{{template "icon-install" .}}</span>
           <span class="btn-install-icon-busy">{{template "icon-hourglass" .}}</span>
-          <span class="btn-install-label">Install</span>
+          <span class="btn-install-label">{{if .VSatelliteInstalled}}Status{{else}}Install{{end}}</span>
         </button>
         {{end}}
       </td>
@@ -51,6 +52,12 @@
       <td colspan="4" class="install-cell">
         <div class="install-collapse" id="install-collapse-{{.Name}}">
           <div class="install-panel">
+            {{if .VSatelliteInstalled}}
+            <div class="install-panel-inner">
+              <p class="muted">{{if eq .VSatelliteStatus "running"}}vSatellite installed and running{{else}}vSatellite installed{{end}}</p>
+              <p class="muted">Tenant details are not stored locally on this host.</p>
+            </div>
+            {{else}}
             <form class="install-panel-inner" method="post" action="/containers/{{.Name}}/install" onsubmit="return confirmInstall(event, '{{.Name}}')">
               <input type="hidden" name="protocol" value="ccm">
               <div class="install-protocols">
@@ -81,6 +88,7 @@
                 <button type="submit" class="btn btn-primary btn-small">Confirm</button>
               </div>
             </form>
+            {{end}}
           </div>
         </div>
       </td>

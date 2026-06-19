@@ -33,11 +33,17 @@
 
   function applyInstallState() {
     document.querySelectorAll('.btn-install').forEach(function (btn) {
+      if (btn.dataset.installed === 'true') {
+        btn.dataset.state = 'status';
+        btn.disabled = false;
+        btn.querySelector('.btn-install-label').textContent = 'Status';
+        return;
+      }
       var name = btn.dataset.vsat;
       var state = installState[name] || 'ready';
       btn.dataset.state = state;
       btn.disabled = state === 'installing' || state === 'running';
-      btn.querySelector('.btn-install-label').textContent = state === 'installing' ? 'Installing...' : (state === 'running' ? 'Running' : 'Install');
+      btn.querySelector('.btn-install-label').textContent = state === 'installing' ? 'Installing...' : (state === 'running' ? 'Status' : 'Install');
     });
     installOpen.forEach(function (name) {
       var collapse = document.getElementById('install-collapse-' + name);

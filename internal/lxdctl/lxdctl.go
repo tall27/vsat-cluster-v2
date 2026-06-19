@@ -40,9 +40,11 @@ const warmupContainerName = "vsat-warmup"
 
 // Container is the trimmed view of an LXD instance the UI needs.
 type Container struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	IPv4   string `json:"ipv4"`
+	Name                string `json:"name"`
+	Status              string `json:"status"`
+	IPv4                string `json:"ipv4"`
+	VSatelliteInstalled bool   `json:"vsatelliteInstalled"`
+	VSatelliteStatus    string `json:"vsatelliteStatus,omitempty"`
 }
 
 // rawContainer mirrors the subset of `lxc list --format json` we parse.
@@ -149,7 +151,38 @@ func (c *Client) List(ctx context.Context) ([]Container, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lxc list: %w", err)
 	}
-	return parseContainers(out)
+	containers, err := parseContainers(out)
+	if err != nil {
+		return nil, err
+	}
+	for i := range containers {
+		if containers[i].Status != "Running" {
+			continue
+		}
+		if status := c.detectVSatelliteStatus(ctx, containers[i].Name); status != "" {
+			containers[i].VSatelliteInstalled = true
+			containers[i].VSatelliteStatus = status
+		}
+	}
+	return containers, nil
+}
+
+func (c *Client) detectVSatelliteStatus(ctx context.Context, name string) string {
+	out, err := c.Exec(ctx, name, `if [ ! -d /opt/vsatellite ]; then echo not-installed; exit 0; fi
+k3s=$(systemctl is-active k3s 2>/dev/null || true)
+pods=$(timeout 5s /opt/vsatellite/vsatellite/bin/kubectl get pods -n satellite -l app=satellite --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+if [ "$k3s" = active ] && [ "$pods" -gt 0 ]; then echo running; else echo installed; fi`)
+	if err != nil {
+		return ""
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "running":
+		return "running"
+	case "installed":
+		return "installed"
+	default:
+		return ""
+	}
 }
 
 // Add launches a new container with the configured profile, enforcing the cap,

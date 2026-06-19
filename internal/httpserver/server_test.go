@@ -71,6 +71,7 @@ type recordingRunner struct {
 	mu         sync.Mutex
 	listJSON   string
 	failScript string
+	execOut    []byte
 	calls      [][]string
 }
 
@@ -84,6 +85,9 @@ func (r *recordingRunner) Run(_ context.Context, args ...string) ([]byte, error)
 	}
 	if r.failScript != "" && len(args) > 0 && args[0] == "exec" && strings.Contains(strings.Join(args, " "), r.failScript) {
 		return nil, errors.New("uninstall failed")
+	}
+	if len(args) > 0 && args[0] == "exec" && r.execOut != nil {
+		return r.execOut, nil
 	}
 	return []byte(""), nil
 }
@@ -202,6 +206,35 @@ func TestInstallRequiresAPIKey(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "API key is required") {
 		t.Fatalf("expected API key error, got %q", rec.Body.String())
+	}
+}
+
+func TestDashboardShowsStatusButtonForInstalledVSatellite(t *testing.T) {
+	runner := &recordingRunner{
+		listJSON: `[{"name":"vsat-a","status":"Running","state":{"network":{}}}]`,
+		execOut:  []byte("running\n"),
+	}
+	srv := newTestServerWithRunner(t, runner)
+	cookies := setupSessionRequest(t, srv)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected dashboard, got %d", rec.Code)
+	}
+	if !strings.Contains(body, `<span class="btn-install-label">Status</span>`) {
+		t.Fatalf("expected Status button for installed VSatellite, got %q", body)
+	}
+	if strings.Contains(body, `name="api_key"`) {
+		t.Fatalf("installed VSatellite should not show API key install form, got %q", body)
+	}
+	if !strings.Contains(body, "vSatellite installed and running") {
+		t.Fatalf("expected installed status message, got %q", body)
 	}
 }
 
